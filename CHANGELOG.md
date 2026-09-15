@@ -13,8 +13,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Nothing planned. The roadmap is empty by decision, not by neglect — see
-v0.32.1 for why its last two entries were retired rather than carried.
+### The Stop hook reads the transcript's tail, not the whole file
+
+`stop_guard._last_assistant_message_from_transcript` used `read_text()` +
+`splitlines()` on the session JSONL to find the last text-bearing assistant
+entry. On 2026-09-15 a 2.5 GB transcript turned every Stop into a 12.7 GB
+process for six seconds (available RAM 19.9 GB → 1.7 GB) and Windows paged
+out the user's other services — a 90 s backend stall per turn. The reader now
+walks the file backwards in growing byte windows (4 MiB, ×4, capped at
+64 MiB) cut to whole lines and returns the first text-bearing assistant entry
+it meets: the same answer as before at a peak cost of a few windows. Three
+tests pin it (a 60 MB transcript costs under four windows, a line longer than
+the window grows it, 256-byte windows agree with a whole-file scan). 749 tests.
 
 ---
 

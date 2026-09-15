@@ -2545,3 +2545,75 @@ class TestSyncMarkerSubstanceV032(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTranscriptTailRead(unittest.TestCase):
+    """v0.39.2 -- the transcript fallback reads the tail, not the whole file.
+
+    2026-09-15: a 2.5 GB session transcript read whole turned every Stop
+    into a 12.7 GB process for six seconds (available RAM 19.9 GB -> 1.7 GB)
+    and the OS paged out the user's other services. The reader now walks
+    backwards in growing windows; these pins keep its cost a few windows.
+    """
+
+    def setUp(self) -> None:
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="ccens-tail-"))
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        import stop_guard
+        self.guard = stop_guard
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    @staticmethod
+    def _entry(role: str, text: str) -> str:
+        return json.dumps({"type": role, "message": {"content": [{"type": "text", "text": text}]}})
+
+    def _write(self, name: str, lines: list[str]) -> Path:
+        path = self.tmpdir / name
+        path.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+        return path
+
+    def test_large_transcript_costs_a_few_windows_not_the_file(self) -> None:
+        import tracemalloc
+        filler = self._entry("user", "x" * 4000)
+        lines = [filler] * 15000  # ~60 MB of earlier turns
+        lines.append(self._entry("assistant", "最后一条：已修复。tldr: done"))
+        path = self._write("big.jsonl", lines)
+        self.assertGreater(path.stat().st_size, 50 * 1024 * 1024)
+        tracemalloc.start()
+        try:
+            got = self.guard._last_assistant_message_from_transcript(str(path))
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(got, "最后一条：已修复。tldr: done")
+        self.assertLess(
+            peak, 4 * self.guard.TRANSCRIPT_TAIL_WINDOW,
+            msg=f"peak {peak} bytes: the reader touched more than a few windows",
+        )
+
+    def test_window_grows_past_a_line_longer_than_itself(self) -> None:
+        reply = self._entry("assistant", "真正的回复。")
+        giant = json.dumps({"type": "user", "message": {"content": "y" * (6 * 1024 * 1024)}})
+        path = self._write("giant.jsonl", [self._entry("user", "hi"), reply, giant])
+        self.assertEqual(
+            self.guard._last_assistant_message_from_transcript(str(path)), "真正的回复。"
+        )
+
+    def test_tiny_windows_agree_with_a_whole_file_scan(self) -> None:
+        lines = []
+        for i in range(400):
+            role = "assistant" if i % 3 == 0 else "user"
+            lines.append(self._entry(role, f"entry {i} " + "z" * (i * 7 % 300)))
+        lines.append(json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "echo"}}]}}))
+        path = self._write("varied.jsonl", lines)
+        expected = "entry 399 " + "z" * (399 * 7 % 300)  # 399 % 3 == 0: an assistant entry
+        saved = self.guard.TRANSCRIPT_TAIL_WINDOW
+        self.guard.TRANSCRIPT_TAIL_WINDOW = 256
+        try:
+            got = self.guard._last_assistant_message_from_transcript(str(path))
+        finally:
+            self.guard.TRANSCRIPT_TAIL_WINDOW = saved
+        self.assertEqual(got, expected)

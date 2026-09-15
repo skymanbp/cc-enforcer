@@ -324,7 +324,9 @@ the agent — discipline enforcement must never become an obstacle to actual wor
 
 `stop_guard.py` (event `Stop`, no matcher — Stop fires unconditionally per
 Claude Code spec) inspects `payload.assistant_message` (or falls back to
-the last assistant entry in `payload.transcript_path`).
+the last text-bearing assistant entry in `payload.transcript_path`, read
+from the file's tail in growing windows — v0.39.2, after a 2.5 GB
+transcript read whole turned every Stop into a 12.7 GB process).
 
 **Decision tree (v0.11.0):**
 

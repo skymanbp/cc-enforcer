@@ -1577,64 +1577,80 @@ def _emit_block(reason_text: str) -> None:
 # The Stop payload normally includes `assistant_message`. If a future
 # version of Claude Code drops that field (or if our payload-shape
 # assumption is wrong), we fall back to reading the last assistant
-# entry from `transcript_path` (a JSONL file).
+# entry from `transcript_path` (a JSONL file), reading only its tail.
 # --------------------------------------------------------------------------- #
+# v0.39.2 (2026-09-15) -- read the TAIL, never the whole file. A 2.5 GB
+# session transcript read whole (`read_text` + `splitlines`) turned every
+# Stop into a 12.7 GB process for six seconds (machine available RAM
+# 19.9 GB -> 1.7 GB) and the OS paged out the user's other services. The
+# last text-bearing assistant entry sits at the end, so the reader walks
+# backwards in growing byte windows cut to whole lines and stops at the
+# first hit; a line longer than the window simply grows it (bounded by
+# TRANSCRIPT_TAIL_LIMIT). Peak memory is a few windows, whatever the file.
+TRANSCRIPT_TAIL_WINDOW = 4 * 1024 * 1024
+TRANSCRIPT_TAIL_LIMIT = 64 * 1024 * 1024
+
+
+def _entry_text(entry: dict) -> str:
+    """Text blocks of one transcript entry; "" for a tool-only / non-text entry.
+
+    Claude Code 2.x JSONL nests content under entry["message"]["content"];
+    older / generic schemas place it at the top level. Nested first, then
+    top level (v0.9.1 fixed the silent no-op that read only the top level).
+    """
+    message = entry.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if content is None:
+        content = entry.get("content")
+    if isinstance(content, list):
+        parts = [block.get("text", "") for block in content
+                 if isinstance(block, dict) and block.get("type") == "text" and block.get("text")]
+        return "\n".join(parts)
+    if isinstance(content, str):
+        return content
+    return ""
+
+
 def _last_assistant_message_from_transcript(transcript_path: str) -> str:
     p = Path(transcript_path)
     if not p.is_file():
         return ""
     try:
-        # Read the last few lines; the last assistant message will be
-        # near the end. We read the whole file because JSONL lines can
-        # be long and a tail-based approach is fiddlier.
-        text = p.read_text(encoding="utf-8")
+        size = p.stat().st_size
+        window = TRANSCRIPT_TAIL_WINDOW
+        with p.open("rb") as stream:
+            while True:
+                start = max(0, size - window)
+                stream.seek(start)
+                chunk = stream.read(size - start)
+                if start > 0:
+                    # The slice starts mid-line: drop the partial first line.
+                    cut = chunk.find(b"\n")
+                    chunk = b"" if cut < 0 else chunk[cut + 1:]
+                for raw in reversed(chunk.split(b"\n")):
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        entry = json.loads(raw.decode("utf-8", errors="replace"))
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    # Common transcript schemas use 'role' or 'type'; tolerate either.
+                    role = entry.get("role") or entry.get("type") or ""
+                    if role != "assistant":
+                        continue
+                    # Only a text-bearing entry counts: a trailing tool_use entry
+                    # must not hide the actual reply (the v0.9.1 regression).
+                    extracted = _entry_text(entry)
+                    if extracted:
+                        return extracted
+                if start == 0 or window >= TRANSCRIPT_TAIL_LIMIT:
+                    return ""
+                window = min(window * 4, TRANSCRIPT_TAIL_LIMIT)
     except OSError:
         return ""
-    last_assistant = ""
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        # Common transcript schemas use 'role' or 'type'; tolerate either.
-        role = entry.get("role") or entry.get("type") or ""
-        if role != "assistant":
-            continue
-        # Claude Code 2.x JSONL schema nests content under
-        # entry["message"]["content"]; older / generic schemas place
-        # it at the top level entry["content"]. Read the nested one
-        # first, fall back to top level. v0.9.1 fixed two related
-        # silent-failure bugs:
-        #   (1) Reading only top-level entry["content"] missed every
-        #       Claude Code 2.x transcript (nested schema), making the
-        #       whole Stop hook a no-op for releases v0.6.0..v0.9.0.
-        #   (2) Overwriting last_assistant on EVERY assistant entry
-        #       (including pure tool_use entries with no text blocks)
-        #       wiped out the actual text reply when the final
-        #       assistant entry of the turn was a tool call. We now
-        #       only update when the entry yields non-empty text, so
-        #       the most recent text-bearing reply wins.
-        content = entry.get("message", {}).get("content")
-        if content is None:
-            content = entry.get("content")
-        extracted = ""
-        if isinstance(content, list):
-            # content array of mixed {type, text} / {type, tool_use} / etc.
-            parts = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    t = block.get("text", "")
-                    if t:
-                        parts.append(t)
-            extracted = "\n".join(parts)
-        elif isinstance(content, str):
-            extracted = content
-        if extracted:
-            last_assistant = extracted
-    return last_assistant
 
 
 # --------------------------------------------------------------------------- #
