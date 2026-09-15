@@ -13,6 +13,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+Nothing planned. The roadmap is empty by decision, not by neglect — see
+v0.32.1 for why its last two entries were retired rather than carried.
+
+---
+
+## [0.39.2] — 2026-09-15
+
+**The Stop hook reads the transcript's tail, not the whole file.** One commit
+(`83958ea`) after v0.39.1, for a hook whose whole job is to run unnoticed
+and had started costing the machine 12.7 GB per turn.
+
 ### The Stop hook reads the transcript's tail, not the whole file
 
 `stop_guard._last_assistant_message_from_transcript` used `read_text()` +
@@ -22,9 +33,12 @@ process for six seconds (available RAM 19.9 GB → 1.7 GB) and Windows paged
 out the user's other services — a 90 s backend stall per turn. The reader now
 walks the file backwards in growing byte windows (4 MiB, ×4, capped at
 64 MiB) cut to whole lines and returns the first text-bearing assistant entry
-it meets: the same answer as before at a peak cost of a few windows. Three
+it meets: the same answer as before at a peak cost of a few windows —
+measured on the 2.5 GB file itself, 8.3 MB traced peak in 0.02 s. Three
 tests pin it (a 60 MB transcript costs under four windows, a line longer than
-the window grows it, 256-byte windows agree with a whole-file scan). 749 tests.
+the window grows it, 256-byte windows agree with a whole-file scan).
+`tests/README.md` and `docs/ARCHITECTURE.md` describe the fallback as a tail
+read. 746 → 749 tests.
 
 ---
 
