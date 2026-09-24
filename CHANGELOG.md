@@ -14,8 +14,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 **The injection, the start-up path, the guard messages, the documentation and
-the rules pack, slimmed and put in order.** Five commits after v0.39.2, one per
-concern. No hook's enforcement semantics change: what is denied, blocked,
+the rules pack, slimmed and put in order.** Five concerns after v0.39.2, one
+commit each. No hook's enforcement semantics change: what is denied, blocked,
 forgiven or recorded is byte-identical, and every rewrite below is pinned by a
 test that says so.
 
