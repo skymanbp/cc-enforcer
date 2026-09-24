@@ -183,11 +183,14 @@ Stop 钩子读 agent 即将收尾的那条回复。只要里面含完成声明�
 setx CC_ENFORCER_LANG zh          # Windows；POSIX 用 export
 ```
 
-[`hooks/scripts/`](hooks/scripts/) 下十个脚本，坐在十五个共享
-[`lib/`](hooks/scripts/lib/) 模块上。只有上表那四个注册为钩子；另外六个
-（`register_read.py`、`manage_edicts.py`、`manage_sync_gate.py`、`gc_state.py`、
-`i18n_check.py`、`bench_hooks.py`）分别服务于逃生口、slash 命令、CI 与基准测试。
-完整契约见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §2。
+[`hooks/scripts/`](hooks/scripts/) 下十四个 Python 文件，坐在十五个共享
+[`lib/`](hooks/scripts/lib/) 模块上。只有上表那四个注册为钩子，而这四个各自
+只是一层薄壳，本体在同目录的 `_impl.py` 模块里：Python 只缓存被 import 的模块
+的字节码，从不缓存被直接运行的那个脚本，所以这一拆正是让钩子免于每次调用都
+重新编译自己源码的办法。另外六个（`register_read.py`、`manage_edicts.py`、
+`manage_sync_gate.py`、`gc_state.py`、`i18n_check.py`、`bench_hooks.py`）分别
+服务于逃生口、slash 命令、CI 与基准测试。完整契约见
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §2。
 
 ### 安装
 
@@ -348,7 +351,7 @@ cc-enforcer:
   before: {architecture: ..., root cause: ..., solution: ...}
   edits: [{file: "path:line", what: "..."}]
   convergence:
-    re-trigger: "$ python -m unittest → Ran 768 tests, OK"
+    re-trigger: "$ python -m unittest → Ran 773 tests, OK"
     boundary case: ...
     existing tests: ...
     self-quiz: {really solved: ..., better solution: ..., unverified: ..., verification reasonable: ...}
@@ -528,11 +531,16 @@ cc-enforcer/
 ├── hooks/
 │   ├── hooks.json               # 事件 → 脚本的接线
 │   └── scripts/
-│       │                        # -- 钩子入口（hooks.json 里那四个）--
+│       │                        # -- 钩子入口（hooks.json 里那四个）：薄壳 --
 │       ├── inject_context.py    # 软层：SessionStart + 每轮注入
 │       ├── read_guard.py        # 硬层：改前必读、内容层 + 频率层
 │       ├── bash_guard.py        # 硬层：命令纪律、read 登记
 │       ├── stop_guard.py        # 硬层：九层完成声明闸门
+│       │                        # -- 它们的本体：以 import 方式加载，字节码因此有缓存 --
+│       ├── inject_context_impl.py
+│       ├── read_guard_impl.py
+│       ├── bash_guard_impl.py
+│       ├── stop_guard_impl.py
 │       │                        # -- 辅助入口（不是钩子）--
 │       ├── register_read.py     # SHA-256 校验的 read 缓存逃生口
 │       ├── manage_edicts.py     # 圣旨 CRUD CLI
@@ -565,7 +573,7 @@ cc-enforcer/
 │   ├── run_demo.py              #   驱动真实钩子，捕获两份 transcript
 │   ├── render_svg.py            #   transcript → 终端风格 SVG，零依赖
 │   └── out/*.svg                #   已提交的图片，由 tests/test_demo.py 钉住
-└── tests/                       # 768 个测试（python -m unittest discover tests）
+└── tests/                       # 773 个测试（python -m unittest discover tests）
     │                            # 每个文件以它覆盖的对象命名 —— 见 tests/README.md
     ├── _helpers.py              #   共享 run_hook(...) 子进程夹具
     ├── test_<hook>.py           #   黑盒子进程测试，每个钩子入口一个
@@ -578,7 +586,7 @@ cc-enforcer/
     └── test_audit_*.py          #   历次审计轮的回归套件（v026 ×2、v027）
 ```
 
-全部脚本由 [`tests/`](tests/) 里的 **768 个测试**覆盖 —— 黑盒子进程测试完全按
+全部脚本由 [`tests/`](tests/) 里的 **773 个测试**覆盖 —— 黑盒子进程测试完全按
 Claude Code 的方式拉起每个钩子，外加共享模型的单元件与四道漂移门。
 
 ---

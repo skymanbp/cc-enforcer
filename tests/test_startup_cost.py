@@ -20,6 +20,8 @@ long since imported most of these modules itself.
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -34,6 +36,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _helpers import SCRIPTS_DIR, run_hook  # noqa: E402 -- after the path bootstrap above
 
 sys.path.insert(0, str(SCRIPTS_DIR))
+
+# The four registered hook entries, by stem: `<stem>.py` is the thin shell
+# `hooks.json` runs, `<stem>_impl.py` the body it imports (v0.41).
+ENTRY_STEMS = ("inject_context", "read_guard", "bash_guard", "stop_guard")
 
 
 def _imported_modules(script: str, args: list[str], payload: dict,
@@ -52,6 +58,48 @@ def _imported_modules(script: str, args: list[str], payload: dict,
     return names, proc
 
 
+def _isolated_env(tmp: str) -> dict[str, str]:
+    """A hook environment that sees an empty project AND an empty home.
+
+    Empty project: no edicts.toml, no sync-gate.toml, fresh state. Empty
+    home too, because `edicts.global_path()` is `Path.home()` plus
+    `.claude/cc-enforcer/edicts.toml`: a maintainer who keeps global
+    edicts (this repository's does) would otherwise watch every hook load
+    `tomllib` for a config that genuinely exists, and this file call it a
+    regression on that one machine while CI stays green. Both spellings,
+    because `Path.home()` reads USERPROFILE on Windows and HOME elsewhere
+    — the isolation `test_edicts.py` already uses.
+    """
+    env = dict(os.environ)
+    env["CLAUDE_PLUGIN_DATA"] = tmp
+    env["CLAUDE_PROJECT_DIR"] = tmp
+    env.pop("CC_ENFORCER_AUTO_GC_DAYS", None)
+    env.pop("CLAUDE_ENV_FILE", None)
+    env["HOME"] = tmp
+    env["USERPROFILE"] = tmp
+    return env
+
+
+def _entry_invocation(stem: str, tmp: str) -> tuple[list[str], dict]:
+    """The cheapest legitimate call of one hook entry: its args and payload."""
+    if stem == "inject_context":
+        return (["--event", "UserPromptSubmit"],
+                {"session_id": "t", "hook_event_name": "UserPromptSubmit"})
+    if stem == "read_guard":
+        target = os.path.join(tmp, "x.py")
+        Path(target).write_text("x = 1\n", encoding="utf-8")
+        return ([], {"session_id": "t", "hook_event_name": "PreToolUse",
+                     "tool_name": "Read", "tool_input": {"file_path": target}})
+    if stem == "bash_guard":
+        return ([], {"session_id": "t", "hook_event_name": "PreToolUse",
+                     "tool_name": "Bash",
+                     "tool_input": {"command": "git status --short"}})
+    if stem == "stop_guard":
+        return ([], {"session_id": "t", "hook_event_name": "Stop", "cwd": tmp,
+                     "last_assistant_message": "Still looking; no conclusion yet."})
+    raise ValueError(stem)
+
+
 # What no common path may import any more. `shutil` is listed on its own
 # because it is what argparse costs; `inspect` because it is what
 # dataclasses costs.
@@ -65,22 +113,8 @@ class TestCommonPathsStayLight(unittest.TestCase):
     """No hook's common path imports a module that path never uses."""
 
     def setUp(self) -> None:
-        # An empty project: no edicts.toml, no sync-gate.toml, fresh state.
         self.tmp = tempfile.mkdtemp(prefix="ccenf-startup-")
-        self.env = dict(os.environ)
-        self.env["CLAUDE_PLUGIN_DATA"] = self.tmp
-        self.env["CLAUDE_PROJECT_DIR"] = self.tmp
-        self.env.pop("CC_ENFORCER_AUTO_GC_DAYS", None)
-        self.env.pop("CLAUDE_ENV_FILE", None)
-        # And an empty home. `edicts.global_path()` is `Path.home()` plus
-        # `.claude/cc-enforcer/edicts.toml`; a maintainer who keeps global
-        # edicts (this repository's does) would otherwise watch every hook
-        # load `tomllib` for a config that genuinely exists, and this class
-        # call it a regression on that one machine while CI stays green.
-        # Both spellings, because `Path.home()` reads USERPROFILE on Windows
-        # and HOME elsewhere — the isolation `test_edicts.py` already uses.
-        self.env["HOME"] = self.tmp
-        self.env["USERPROFILE"] = self.tmp
+        self.env = _isolated_env(self.tmp)
 
     def _check(self, script: str, args: list[str], payload: dict,
                also_forbidden: set[str], expect_stdout: bool) -> None:
@@ -175,6 +209,126 @@ class TestCommonPathsStayLight(unittest.TestCase):
             "isolates, or the inventory cannot see tomllib at all — in which "
             "case every negative check above is vacuous",
         )
+
+
+class TestEntryScriptsAreThinShells(unittest.TestCase):
+    """v0.41 — each hook entry imports its body instead of being it.
+
+    CPython caches the bytecode of every module it IMPORTS under
+    `__pycache__` and re-uses it while the source is unchanged; the script
+    it was asked to RUN is compiled from source on every start and never
+    cached. Through v0.40 every hook entry was its whole body, so each
+    invocation re-compiled it — `stop_guard.py` at ~2,000 lines cost about
+    7 ms of compile on the maintainer's machine, more than the hook's own
+    work. The body now lives in `<entry>_impl.py`; the entry imports it
+    and calls its `main()`.
+
+    Each half has its twin: the body IS cached once the entry has run and
+    the entry itself never is; and the same body run as a script is not
+    cached either, which is the mechanism the split exists for.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp(prefix="ccenf-shell-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.env = _isolated_env(self.tmp)
+
+    def test_each_entry_defines_nothing_and_imports_its_body(self) -> None:
+        for stem in ENTRY_STEMS:
+            with self.subTest(entry=stem):
+                source = (SCRIPTS_DIR / f"{stem}.py").read_text(encoding="utf-8")
+                self.assertNotRegex(
+                    source, r"(?m)^(?:def|class)\s",
+                    f"{stem}.py defines something of its own; the body belongs "
+                    f"in {stem}_impl.py, where it is cached",
+                )
+                args, payload = _entry_invocation(stem, self.tmp)
+                names, proc = _imported_modules(
+                    f"{stem}.py", args, payload, self.env, self.tmp)
+                self.assertEqual(proc.returncode, 0, proc.stderr[-500:])
+                self.assertIn(f"{stem}_impl", names,
+                              f"{stem}.py does not import its body")
+
+    def test_the_body_is_cached_and_the_entry_is_not(self) -> None:
+        # PYTHONPYCACHEPREFIX redirects every .pyc this test causes into a
+        # directory of its own, so the assertion reads a cache it created
+        # rather than whatever earlier runs left under hooks/scripts/.
+        prefix = tempfile.mkdtemp(prefix="ccenf-pyc-")
+        self.addCleanup(shutil.rmtree, prefix, ignore_errors=True)
+        env = dict(self.env, PYTHONPYCACHEPREFIX=prefix)
+        env.pop("PYTHONDONTWRITEBYTECODE", None)
+
+        def cached() -> set[str]:
+            return {p.name.split(".")[0] for p in Path(prefix).rglob("*.pyc")}
+
+        for stem in ENTRY_STEMS:
+            with self.subTest(entry=stem):
+                args, payload = _entry_invocation(stem, self.tmp)
+                stdin = json.dumps(payload).encode("utf-8")
+                # The twin first: the body run AS A SCRIPT leaves no cache
+                # of itself — exactly what every entry did through v0.40.
+                proc = subprocess.run(
+                    [sys.executable, str(SCRIPTS_DIR / f"{stem}_impl.py"), *args],
+                    input=stdin, capture_output=True, env=env, cwd=self.tmp)
+                self.assertEqual(proc.returncode, 0, proc.stderr[-500:])
+                self.assertNotIn(
+                    f"{stem}_impl", cached(),
+                    "a script run is never cached; if it is, the premise of "
+                    "the split is gone and the test is measuring nothing",
+                )
+                # Now the entry: one run, and the body's bytecode exists.
+                proc = subprocess.run(
+                    [sys.executable, str(SCRIPTS_DIR / f"{stem}.py"), *args],
+                    input=stdin, capture_output=True, env=env, cwd=self.tmp)
+                self.assertEqual(proc.returncode, 0, proc.stderr[-500:])
+                self.assertIn(f"{stem}_impl", cached(),
+                              "the entry ran and its body was not cached")
+                self.assertNotIn(
+                    stem, cached(),
+                    "the entry itself must never be cached: it is the script "
+                    "Python was asked to run",
+                )
+
+    def test_importing_an_entry_yields_its_body(self) -> None:
+        """`import stop_guard` must hand back the body module itself.
+
+        A copied namespace would look the same until a test patched
+        through the entry's name — `inject_context.PLUGIN_ROOT = …` in
+        `test_inject_context.py` — and the running code never noticed.
+        """
+        for stem in ENTRY_STEMS:
+            with self.subTest(entry=stem):
+                entry = importlib.import_module(stem)
+                body = importlib.import_module(f"{stem}_impl")
+                self.assertIs(entry, body)
+
+    def test_an_entry_loaded_by_path_finds_its_body_on_its_own(self) -> None:
+        """The load-by-file-path route gets the body's names too — from a
+        process that never put hooks/scripts on sys.path.
+
+        In this test process the directory IS on sys.path, so an in-process
+        probe would pass whether or not the entry bootstraps it; the gate
+        `test_doc_sync` loads `bash_guard.py` exactly this way from a bare
+        process, and that is where the first shell without the bootstrap
+        failed. `-I` keeps the child's sys.path free of the cwd and of any
+        PYTHONPATH, so the entry has to arrange the import itself.
+        """
+        probe = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('probe', sys.argv[1])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+            "print(module.main.__module__)\n"
+        )
+        for stem in ENTRY_STEMS:
+            with self.subTest(entry=stem):
+                proc = subprocess.run(
+                    [sys.executable, "-I", "-c", probe,
+                     str(SCRIPTS_DIR / f"{stem}.py")],
+                    capture_output=True, text=True, cwd=self.tmp, env=self.env,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr[-800:])
+                self.assertEqual(proc.stdout.strip(), f"{stem}_impl")
 
 
 _LAZINESS_PROBE = r"""

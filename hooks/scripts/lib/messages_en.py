@@ -32,8 +32,8 @@ MESSAGES: dict[str, str] = {
     # ---- stop_guard ------------------------------------------------------
     'stop.recovery.a': """Your reply claims completion but carries no convergence
 evidence: no `$ ` shell prompt line, no test counts (`Ran N tests` /
-`N passed`), no fenced output block, no `verified` / `re-ran` /
-`validated` statement.
+`N passed`), no fenced output block. Saying it was verified is a claim,
+not evidence — only output counts, in any language.
 
 Per rule 06 (rules/06-verify-convergence.md), paste the original failing
 command with its now-passing output, or a `pytest` / `unittest` /

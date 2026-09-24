@@ -90,7 +90,9 @@ class TestDoneClaimWithEvidenceAndQuiz(_StopBase):
     a rule-06 marker OR >= 2 of the 4 self-questions."""
 
     def test_done_with_evidence_and_convergence_marker_allows(self) -> None:
-        # 重触发 is both an evidence pattern AND a convergence marker.
+        # The `$ pytest` line and the test count are the evidence; 重触发
+        # is the convergence marker (v0.41: a marker only, no longer
+        # evidence in its own right).
         # v0.8.0: also needs rule-07 fidelity marker.
         # v0.20: also needs a tldr (layer h).
         msg = (
@@ -106,16 +108,48 @@ class TestDoneClaimWithEvidenceAndQuiz(_StopBase):
         self.assertEqual(rc, 0)
         self.assertIsNone(out, msg=f"expected silent allow, got {out!r}")
 
-    def test_done_with_re_triggered_keyword_allows(self) -> None:
-        # 重触发 alone is a convergence marker.
-        # v0.8.0: also needs rule-07 fidelity marker.
-        # v0.20: also needs a tldr (layer h).
+    def test_check_names_alone_are_not_evidence_v041(self) -> None:
+        """v0.41 — naming a rule-06 check is not showing its output.
+
+        Through v0.40 the four Chinese check names were in the EVIDENCE
+        set as well as the marker set, so this reply — a done-claim, the
+        word 重触发, a fidelity marker and a tldr, and not one line of
+        output — passed every layer, while its English twin below was
+        blocked at (a). Same reply, same verdict now: (a), for want of
+        any command, count or fenced block.
+        """
+        for label, msg in (
+            ("zh check names", "完成了。重触发原症状后异常消失，边界用例、"
+                               "反向用例也过了，已收敛。无遗漏。\n"
+                               "tldr: 改完了，异常没了。"),
+            # No digit before "passed": `rule 06 passed` reads as the
+            # test-runner count `6 passed`, which IS output-shaped.
+            ("en verbs", "Done. Re-ran the suite, verified and validated "
+                         "the fix. Convergence: fine. rule 07: no omission.\n"
+                         "tldr: fixed, nothing else touched."),
+        ):
+            with self.subTest(case=label):
+                rc, out, _ = self._stop(msg)
+                self.assertEqual(rc, 0)
+                self.assertIsNotNone(out, msg=f"{label}: expected a block")
+                self.assertIn("FAILED at Layer (a)", out.get("reason", ""))
+
+    def test_the_same_check_names_with_output_still_pass(self) -> None:
+        """Twin: add one real output line and the reply above passes.
+
+        Pins that the words were removed from the evidence set only — as
+        convergence markers for layer (c) they still do their job, so the
+        agent who names the check AND shows the output is not asked for a
+        marker twice.
+        """
         msg = (
-            "完成了。重触发原症状后异常消失。无遗漏。\n"
+            "完成了。\n$ python -m unittest\nRan 12 tests\nOK\n"
+            "重触发原症状后异常消失。无遗漏。\n"
             "tldr: 改完了，异常没了。"
         )
         rc, out, _ = self._stop(msg)
-        self.assertIsNone(out)
+        self.assertEqual(rc, 0)
+        self.assertIsNone(out, msg=f"expected silent allow, got {out!r}")
 
     def test_evidence_only_without_quiz_or_marker_is_blocked_v07(self) -> None:
         # v0.6.0 would have allowed this; v0.7.0 blocks because no rule-06
@@ -216,7 +250,8 @@ class TestFidelityLayer(_StopBase):
     """
 
     def test_passes_a_b_c_but_no_fidelity_marker_or_quiz_blocks(self) -> None:
-        # Done + evidence + rule-06 marker (`重触发`) BUT no fidelity
+        # Done + evidence (`$ pytest`, `Ran 35 tests`) + rule-06 marker
+        # (`重触发`, a marker only since v0.41) BUT no fidelity
         # marker and no fidelity quiz answers → must block with rule-07
         # reason.
         msg = (

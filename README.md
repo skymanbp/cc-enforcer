@@ -194,11 +194,15 @@ so non-English replies reach the detectors intact; and everything a guard
 resolved per key through `CC_ENFORCER_LANG` — what the guards *match* stays
 bilingual regardless ([`docs/I18N.md`](docs/I18N.md)).
 
-Ten scripts under [`hooks/scripts/`](hooks/scripts/) sit on fifteen shared
-[`lib/`](hooks/scripts/lib/) modules. Only the four in the table above are
-registered as hooks; the other six (`register_read.py`, `manage_edicts.py`,
-`manage_sync_gate.py`, `gc_state.py`, `i18n_check.py`, `bench_hooks.py`) back
-the escape hatch, the slash commands, CI and the benchmark. Full contracts:
+Fourteen Python files under [`hooks/scripts/`](hooks/scripts/) sit on fifteen
+shared [`lib/`](hooks/scripts/lib/) modules. Only the four in the table above
+are registered as hooks, and each of those is a thin entry over a sibling
+`_impl.py` module that holds the body: Python caches the bytecode of a module
+it imports, never of the script it was asked to run, so the split is what
+spares a hook re-compiling its own source on every call. The other six
+(`register_read.py`, `manage_edicts.py`, `manage_sync_gate.py`, `gc_state.py`,
+`i18n_check.py`, `bench_hooks.py`) back the escape hatch, the slash commands,
+CI and the benchmark. Full contracts:
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §2.
 
 ### Install
@@ -366,7 +370,7 @@ cc-enforcer:
   before: {architecture: ..., root cause: ..., solution: ...}
   edits: [{file: "path:line", what: "..."}]
   convergence:
-    re-trigger: "$ python -m unittest → Ran 768 tests, OK"
+    re-trigger: "$ python -m unittest → Ran 773 tests, OK"
     boundary case: ...
     existing tests: ...
     self-quiz: {really solved: ..., better solution: ..., unverified: ..., verification reasonable: ...}
@@ -579,11 +583,16 @@ cc-enforcer/
 ├── hooks/
 │   ├── hooks.json               # event → script wiring
 │   └── scripts/
-│       │                        # -- hook entry points (the four in hooks.json) --
+│       │                        # -- hook entry points (the four in hooks.json): thin shells --
 │       ├── inject_context.py    # soft layer: SessionStart + per-turn injection
 │       ├── read_guard.py        # hard layer: read-before-edit, content + frequency gates
 │       ├── bash_guard.py        # hard layer: command discipline, read registration
 │       ├── stop_guard.py        # hard layer: the nine-layer done-claim gate
+│       │                        # -- their bodies, imported so the bytecode is cached --
+│       ├── inject_context_impl.py
+│       ├── read_guard_impl.py
+│       ├── bash_guard_impl.py
+│       ├── stop_guard_impl.py
 │       │                        # -- auxiliary entry points (not hooks) --
 │       ├── register_read.py     # SHA-256-verified read-cache escape hatch
 │       ├── manage_edicts.py     # Imperial Edicts CRUD CLI
@@ -616,7 +625,7 @@ cc-enforcer/
 │   ├── run_demo.py              #   drives the real hooks, captures both transcripts
 │   ├── render_svg.py            #   transcript -> terminal SVG, zero dependencies
 │   └── out/*.svg                #   the committed images, pinned by tests/test_demo.py
-└── tests/                       # 768 black-box + unit tests (python -m unittest discover tests)
+└── tests/                       # 773 black-box + unit tests (python -m unittest discover tests)
     │                            # each file is named after what it covers — see tests/README.md
     ├── _helpers.py              #   shared run_hook(...) subprocess fixture
     ├── test_<hook>.py           #   black-box subprocess tests, one per hook entry point
@@ -629,7 +638,7 @@ cc-enforcer/
     └── test_audit_*.py          #   per-audit-round regression suites (v026 x2, v027)
 ```
 
-All scripts are covered by **768 tests** in [`tests/`](tests/) — black-box
+All scripts are covered by **773 tests** in [`tests/`](tests/) — black-box
 subprocess tests that launch each hook exactly as Claude Code does, plus unit
 tests for the shared models and the four drift gates.
 

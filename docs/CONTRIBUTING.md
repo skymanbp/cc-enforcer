@@ -51,6 +51,12 @@ denied by it while working on it.
   unwritable by any agent running it.
 - **Start-up stays light.** No hook imports on its common path a module that
   path does not use; `tests/test_startup_cost.py` names the forbidden set.
+- **The entries are live.** The four files `hooks.json` names are thin shells
+  over `<name>_impl.py` bodies, and when the plugin is installed from your
+  clone, the session you are working in runs its hooks from those very files.
+  Edit a body freely; never move or break an entry before its replacement
+  exists, or every Read / Edit / Write / Bash call is refused until the
+  entry is restored from outside the hooked tools.
 - **History lives in the CHANGELOG.** Reference docs describe the plugin as it
   is; the field failure that motivated a design, and the version it shipped
   in, go in the release entry, not in the rule file or the architecture doc.

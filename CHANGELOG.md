@@ -4408,7 +4408,7 @@ the actual failing layer.
 
 ---
 
-## [0.11.0] — 2026-05-19
+## Roadmap as recorded at 0.11.0 — 2026-05-19
 
 - **Additional bypass patterns**
   - Evaluate adding `git reset --hard` (if uncommitted changes), `git rebase
@@ -5792,7 +5792,7 @@ soft layer is wired live.
 
 - Original free-form `claude.md` (replaced by the structured `CLAUDE.md`).
 
-[Unreleased]: https://github.com/skymanbp/cc-enforcer/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/skymanbp/cc-enforcer/compare/v0.41.0...HEAD
 [0.11.0]: https://github.com/skymanbp/cc-enforcer/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/skymanbp/cc-enforcer/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/skymanbp/cc-enforcer/compare/v0.9.0...v0.9.1

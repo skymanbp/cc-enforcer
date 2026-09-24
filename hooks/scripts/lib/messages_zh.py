@@ -23,8 +23,8 @@ from __future__ import annotations
 MESSAGES: dict[str, str] = {
     # ---- stop_guard ------------------------------------------------------
     'stop.recovery.a': """你的回复声称完成，却没有任何收敛证据：没有 `$ ` 命令提示行、
-没有测试计数（`Ran N tests` / `N passed`）、没有围栏输出块、也没有
-`重触发` / `边界用例` / `反向用例` / `verified` / `re-ran` 这类验证陈述。
+没有测试计数（`Ran N tests` / `N passed`）、也没有围栏输出块。「已验证」
+「重触发过了」这类话是陈述不是证据 —— 只有输出算数，中英文一样。
 
 按 rule 06（rules/06-verify-convergence.md），贴出最初失败的那条命令和它
 现在通过的输出，或一次带计数的 `pytest` / `unittest` / `npm test` 运行。
