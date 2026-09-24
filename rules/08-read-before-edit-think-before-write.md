@@ -6,6 +6,8 @@ severity: must
 
 # Rule 08 — Read-before-edit · think-before-write
 
+**Enforced by:** `PreToolUse(Edit|Write)` — DENY when the target file exists and was not Read in this session; `Stop` layer (e) — BLOCK when an edit turn's final reply has neither a rule-08 marker (`rule 08` / `read-before-edit` / `think-before-write` / `改前必读` / `写前必想`) nor three of the six rule-02 keyword groups (architecture · responsibility · root cause · solution · impact · risk).
+
 ## Principle
 
 > **Editing and writing are separately bound by pre-action discipline.**
@@ -13,11 +15,7 @@ severity: must
 > - **Read before edit** — Before any `Edit`, you must have **fully Read** the target file, `Read` the surrounding context of every call site, and `Grep` the blast radius.
 > - **Think before write** — Before any `Edit` / `Write`, you must **explicitly state in chain-of-thought or the final reply** *why* you are writing what you are writing (root cause + impact + alternatives compared).
 
-Rule 04 governs "read fully"; rule 02 governs the "seven questions". Rule 08 **combines them into a single pre-action hard discipline** and adds **physical enforcement** (hooks):
-
-- `PreToolUse(Read|Edit|Write)` already enforces "target file was Read in this session" before allowing Edit/Write (v0.3.2+).
-- `PreToolUse(Edit|Write)` content-layer detects "patch-style" markers (see rule 09).
-- **Stop hook layer (e)**: at end-of-turn, if any `Edit`/`Write` happened this turn, the final reply **must include a "systematic self-answer" marker** (≥ 3 keywords from rule-02's seven questions: architecture / responsibility / root cause / solution / impact / risk / global). Otherwise → block.
+Rule 04 governs "read fully"; rule 02 governs the "seven questions". Rule 08 **combines them into a single pre-action hard discipline** with a gate on each side: the write gate refuses an edit to a file you have not Read, and the closing gate refuses a done-claim from an edit turn whose reply never says why the change was made.
 
 ## Must do (MUST)
 
@@ -25,7 +23,7 @@ Rule 04 governs "read fully"; rule 02 governs the "seven questions". Rule 08 **c
 
 1. **Read the target file completely** — not the diff context, not the grep hit line, the **whole file**. For oversized files, partition and read every relevant function / section.
 2. **Read the call sites completely** — `Grep` every reference to the symbol; `Read` ≥ 20 surrounding lines for each.
-3. **Read connected files** — Editing `rules/*.md` requires Reading `prompts/`, `commands/`, the entries in `docs/ARCHITECTURE.md` §8 connected-files map.
+3. **Read connected files** — the files the repository's connected-file map lists for the target (here [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) §8). Editing `rules/*.md` means Reading `prompts/` and `commands/` as well.
 4. **Trust the current file state over memory** — what you Read last session may have changed; re-Read in this session before editing.
 
 ### Pre-write (think-before-write)
@@ -41,27 +39,19 @@ Before any `Edit` / `Write`, explicitly answer in chain-of-thought or final repl
 
 > If any of the six answers is **"I don't know / on instinct / probably"** → **Read / Grep / verify first**, then return.
 
-## Physical enforcement (hooks)
-
-| Stage | Hook | Trigger | Action |
-|---|---|---|---|
-| pre-edit | `PreToolUse(Edit\|Write)` | target file exists but was not Read in this session | **DENY** (v0.3.2 read_guard) |
-| pre-write (content layer) | `PreToolUse(Edit\|Write)` | `new_string` contains patch-style markers (un-justified `try:...except:pass` / `# noqa` / `@ts-ignore`) | **DENY** (v0.11 patch-style detector, see rule 09) |
-| post-write (closing) | `Stop` layer (e) | `turn_count == last_edit_turn` but last assistant message lacks "systematic self-answer" markers (< 3 rule-02 keywords) | **BLOCK** (v0.11) |
-
 ## Must not (MUST NOT)
 
 - ❌ **Edit on grep hits**: grep is a locator, not an understanding tool.
 - ❌ **Edit from memory**: "I read this last session" ≠ "I have re-Read the current content in this session".
-- ❌ **Edit without reading connected files**: changing `rules/0X-*.md` without Reading `prompts/` and `docs/RULES.md` immediately breaks the sync contract.
+- ❌ **Edit without reading connected files**: changing a rule file without Reading the prompts that inject it and the index that lists it breaks the sync contract on the spot.
 - ❌ **Submit Edit without recording "why"**: if chain-of-thought / final reply has no explicit root cause / impact / solution, you violate think-before-write.
-- ❌ **Bypass read_guard's DENY then call register_read with a hash you didn't actually read**: defeats the hash gate.
+- ❌ **Bypass the write gate's DENY by registering a hash you did not read**: the hatch recomputes the digest from disk, so the only honest way to produce it is to have opened the file; registering anything else defeats the gate's purpose.
 
 ## Relationships
 
 | Relationship | Note |
 |---|---|
-| 08 vs 04 | 04 specifies "read fully" semantically; 08 is its **pre-action physical-enforcement** entry point (read-before-edit hook). |
+| 08 vs 04 | 04 specifies "read fully" semantically; 08 is its **pre-action physical-enforcement** entry point (the write gate). |
 | 08 vs 02 | 02 is the full "seven questions"; 08 is its **minimum required subset** (six questions) plus a "must record explicitly" hard requirement. |
 | 08 vs 09 | 08 governs "did you complete pre-edit discipline?"; 09 governs "is the content itself patch-style?". Pre-action vs content; complementary. |
 | 08 vs 06 | 06 is post-edit convergence; 08 is pre-edit preparation. `before → during → after` are now fully covered. |
@@ -80,9 +70,9 @@ Before any `Edit` / `Write`, explicitly answer in chain-of-thought or final repl
 
 `Edit` / `Write` is allowed only when **all** of the following hold:
 
-1. The target file has been Read in this session (read_guard does not DENY).
+1. The target file has been Read in this session (the write gate does not DENY).
 2. All call sites / connected files have been Read (manual self-check + Stop layer (e) backstop).
 3. At least 3 of the six pre-write answers above are recorded in the **final reply** — that is the only text Stop layer (e) reads, and what it counts there is the rule-02 keyword set (root cause / architecture / responsibility / solution / impact / risk). "Alternatives compared" is thinking advice above; it is not one of the six the hook counts.
-4. `new_string` contains no patch-style markers (see rule 09 physical interception).
+4. `new_string` contains no patch-style markers (rule 09).
 
 Otherwise → **read-before-edit / think-before-write not met**, return to Read / Grep / verify.

@@ -6,6 +6,8 @@ severity: must
 
 # Rule 06 — Verify-and-converge (post-fix verify-and-converge)
 
+**Enforced by:** `Stop` layer (a) — BLOCK when a done-claim carries no evidence (a `$ command → output` line, a test-run summary, or a fenced block of output); `Stop` layer (c) — BLOCK when the reply has neither a convergence marker (`convergence` / `rule 06` / `self-quiz` / `收敛` / `自答`) nor two of the four self-quiz answers below.
+
 ## Principle
 
 **Done editing ≠ problem solved.** After any fix, update, or patch,

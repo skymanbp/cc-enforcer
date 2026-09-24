@@ -6,6 +6,8 @@ severity: must
 
 # Rule 04 — Read fully; reject keyword-only edits
 
+**Enforced by:** `PreToolUse(Edit|Write)` — DENY when the target file exists and was not Read in this session; the only bypass is the hash hatch (`register_read.py --file ABS --hash SHA256`), and the hook recomputes the digest from disk. Reading the blast radius is text-level discipline.
+
 ## Principle
 
 Before editing or writing new content, the agent **must genuinely

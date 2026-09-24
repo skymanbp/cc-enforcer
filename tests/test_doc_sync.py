@@ -387,7 +387,11 @@ BASH_DENY_SURFACES = (
     # rule 09 owns the Bash interception table; omitting it from this list
     # is why its row still named four patterns after the audit fixed the
     # same row everywhere else. The zh mirror was equally stale, so i18n
-    # parity was green — two wrongs agreeing.
+    # parity was green — two wrongs agreeing. Rule 03's "Enforced by" line
+    # enumerates the same set (the bypass commands are rule 03's subject),
+    # so it is held to the same inventory.
+    "rules/03-root-cause.md",
+    "rules/zh/03-root-cause.md",
     "rules/09-systematic-modification.md",
     "rules/zh/09-systematic-modification.md",
 )

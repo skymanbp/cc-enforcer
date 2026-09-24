@@ -6,6 +6,8 @@ severity: must
 
 # 规则 04 — 完整阅读，拒绝关键词依赖
 
+**强制执行：** `PreToolUse(Edit|Write)` —— 目标文件存在但本会话未 Read 即 DENY；唯一的旁路是哈希登记（`register_read.py --file ABS --hash SHA256`），且钩子会从磁盘重算摘要。影响面阅读是文本层纪律。
+
 ## 原则
 
 编辑或编写新内容前，**必须真实探索整个相关架构、完整阅读所有相关文件**。

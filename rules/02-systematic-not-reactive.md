@@ -6,6 +6,8 @@ severity: must
 
 # Rule 02 — Systematic, not reactive
 
+**Enforced by:** no hook of its own. On an edit turn, `Stop` layer (e) (rule 08) accepts three of this rule's keyword groups in the final reply — architecture · responsibility · root cause · solution · impact · risk — as proof the questions were asked.
+
 ## Principle
 
 Code (or any) modifications must be **systematic** — **zero reactive** patches.

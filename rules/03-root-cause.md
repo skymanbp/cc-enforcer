@@ -6,13 +6,15 @@ severity: must
 
 # Rule 03 — Fix root causes, not symptoms
 
+**Enforced by:** `PreToolUse(Bash)` — DENY on the bypass and destructive commands `--no-verify`, `--no-gpg-sign`, `git rebase --skip`, `--break-system-packages`, `chmod 777`, `rm -rf` on a root path, and `git push --force` (not `--force-with-lease`); `PreToolUse(Edit|Write)` — DENY on an unjustified suppression marker or a `time.sleep` that waits out a race (rule 09 lists the markers). Upstream tracing itself is text-level discipline.
+
 ## Principle
 
 When errors, failures, or exceptions appear: **find the cause, don't
 mask it**. Bypassing checks, silencing errors, or papering over a race
 with `sleep` is **technical debt**, not a fix.
 
-## Upstream tracing (v0.28) — the first cause you find is rarely the root
+## Upstream tracing — the first cause you find is rarely the root
 
 Causes come in chains, and every failure has three kinds of location:
 
@@ -49,10 +51,10 @@ forbidden. The mandatory order is **trace upstream → diagnose → fix**:
    every instance the origin generates (rule 09 "one root cause, one
    unified fix").
 
-Measured on this repo itself: v0.25.1 correctly *named* a root cause —
-detectors that described a *string* instead of the *concept* — and
-then fixed the instances it had seen. The mechanism survived, and the
-next audit (v0.26) found a fresh crop of the same class, including one
+Measured on this repo itself: an audit once correctly *named* a root
+cause — detectors that described a *string* instead of the *concept* —
+and then fixed the instances it had seen. The mechanism survived, and
+the next audit found a fresh crop of the same class, including one
 regression. Fixing instances of a mechanism defect is symptom-patching
 one level up.
 

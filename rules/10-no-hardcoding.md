@@ -6,6 +6,8 @@ severity: must
 
 # Rule 10 — No non-essential hardcoding
 
+**Enforced by:** `PreToolUse(Edit|Write)` — DENY when new code carries a secret-named identifier or quoted key assigned a literal of 8+ characters, a private-key PEM header, an AWS access-key or provider-issued token literal (`ghp_…` / `xox…` / `AIza…`), or credentials inside a URL — unless the value is an obvious placeholder or an adjacent comment carries a rationale token. Prose documents and lockfiles are not scanned (`requirements*.txt` / `constraints*.txt` are); magic numbers and bare endpoints are guidance only.
+
 ## Principle
 
 > **A value that by design should be a variable — read from
@@ -26,110 +28,48 @@ Hardcoding a secret is worse than untidy: it leaks the secret into version
 control, CI logs, and every clone of the repo, and it makes rotation a
 code change. Externalizing it is the root-cause fix (rule 03).
 
-## What is hard-enforced (and what is not)
+## Scope — secrets are the hard class
 
-Faithful to the repo's own conservative-detector philosophy
-(prefer false negatives to false positives), only the unambiguous
-should-be-config classes are **hard-enforced** at write time:
+Faithful to the conservative-detector philosophy (prefer false negatives
+to false positives), only the unambiguous should-be-config classes are
+refused at write time:
 
 | Class | Hard-enforced? |
 |---|---|
-| Secret-named variable assigned a quoted literal (≥ 8 chars) | ✅ yes |
+| Secret-named variable or quoted key assigned a quoted literal (≥ 8 chars) | ✅ yes |
 | Private-key PEM header | ✅ yes |
-| AWS access-key literal (`AKIA…`) | ✅ yes |
+| AWS access-key literal (`AKIA…`) or provider-issued token (`ghp_…` / `xox…` / `AIza…`) | ✅ yes |
 | Credentials inside a connection URL | ✅ yes |
 | Magic numbers | ❌ soft guidance only (FP-prone) |
 | Bare network endpoints / ports | ❌ soft guidance only |
 
 Magic numbers and bare endpoints are *soft* guidance — call them out in
 review, but they are **not** intercepted by a hook, because a hard
-detector for them would fire constantly on legitimate code.
+detector for them would fire constantly on legitimate code. The
+provider-token row exists instead of a bare `token` keyword for the same
+reason: `token = "NUMBER_LITERAL"` is ordinary lexer code.
 
-## Physical interception (hooks)
+A value is treated as a harmless placeholder when it contains `example` /
+`changeme` / `your-` / `<…>` / `${…}` / `dummy` / `redacted`, or is an
+env-read (`os.environ[…]`, `getenv`, `process.env`); a pure-alpha CamelCase
+value after a `:` (`password: "SecretStr"`, a type annotation) is skipped
+too. Prose documents (`.md` / `.rst` / `.txt` / `.adoc`) and lockfiles are
+exempt because they legitimately carry example values and are
+machine-generated; `requirements*.txt` / `constraints*.txt` stay scanned
+because an index URL with embedded credentials there is a real leak
+vector.
 
-| Layer | Hook | Trigger | Action |
-|---|---|---|---|
-| **Edit/Write content** | `PreToolUse(Edit\|Write)` | `new_string` / `content` contains an unjustified hardcoded secret | **DENY** |
+## Marking an essential literal
 
-Prose docs (`.md` / `.markdown` / `.rst` / `.txt` / `.adoc` /
-`.asciidoc`) and lockfiles (`*.lock`, `package-lock.json`, `yarn.lock`,
-`poetry.lock`, `Cargo.lock`, …) are **exempt** — they legitimately carry
-example values and are machine-generated. The detector targets freshly
-authored *code*. One carve-out inside the exemption (v0.24):
-`requirements*.txt` / `constraints*.txt` are dependency manifests, not
-prose — an index URL with embedded credentials there is a real leak
-vector — so they stay scannable despite the `.txt` extension.
-
-### Detector catalog
-
-The following, when present in the incoming content **without a
-placeholder value or an adjacent "why" rationale**, are intercepted:
-
-| Pattern | Example (illustrative) |
-|---|---|
-| secret-named identifier = quoted literal | `api_key = "…10+ chars…"` |
-| secret-named **quoted key** = quoted literal (v0.25) | `"api_key": "…10+ chars…"` |
-| private-key PEM header | `-----BEGIN … PRIVATE KEY-----` |
-| AWS access-key literal | `AKIA` + 16 upper-alnum |
-| provider-issued token literal (v0.25.1) | `ghp_…` / `xox…` / `AIza…` |
-| credentials in a URL | `postgres://user:pw@host/db` |
-
-The quoted-key row closes a gap that mattered: the separator had to
-follow the keyword with only spaces between, so the key's own closing
-quote blocked every match in JSON and quoted-key YAML/TOML — the single
-most common shape a committed credential takes, and `.json` is fully
-scannable. The rarer bare-key spelling was caught while the common one
-was waved through.
-
-The provider-token row is preferred over widening the keyword list with a
-bare `token`: those value shapes are self-identifying, whereas
-`token = "…"` would fire on ordinary lexer / parser code
-(`token = "NUMBER_LITERAL"`) — a false positive this rule pack's "prefer
-false negatives" philosophy rejects.
-
-A value is treated as a harmless placeholder (not flagged) when it
-contains `example` / `changeme` / `your-` / `<…>` / `${…}` / `dummy` /
-`redacted`, or is an env-read (`os.environ[…]`, `getenv`, `process.env`).
-Since v0.25.1 that filter applies to the standalone literal patterns too,
-not only to keyword assignments: an obviously fake
-`postgres://user:redacted@host/db` used to be denied while the identical
-value behind `password = …` was allowed.
-
-A pure-alpha CamelCase value (`^[A-Z][A-Za-z]*$`) is also skipped
-(v0.24): `password: "SecretStr"` is a Python forward-reference type
-annotation, not a credential — real secrets carry digits or symbols.
-**That relief is scoped to the `:` spelling (v0.25.1).** It applied to `=`
-as well, so `password = "SuperSecret"` — a plain assignment of a
-plain-alphabetic credential — was silently allowed.
-
-### Escape hatch — operationalizing "non-essential"
-
-The user's scope is *non-essential* hardcoding. "Essential / example /
-fixture" literals are allowed through when the offending line, or an
+The user's scope is *non-essential* hardcoding. An essential, example or
+fixture literal is allowed through when the offending line, or an
 immediately adjacent line (±1), carries a rationale token **inside a
-comment**: `because` / `原因` / `因为` / `之所以` / `理由` / `故意` /
-`刻意` / `essential` / `必须` / `必需` / `example` / `fixture` /
-`placeholder` / `占位` / `sample` / `test data`, plus the shared leads
-(`see issue` / `tracking` / `intentional` / `third-party` / `per spec` …).
-A bare secret with no rationale = the non-essential case = **DENY**.
-
-Two corrections to how this hatch is decided, because earlier revisions of
-this section described neither:
-
-- **It must be a comment (v0.25.1).** The token used to be searched for in
-  the raw text of the window, so ordinary code such as
-  `reason = compute()` silenced an adjacent detector. Only comment text
-  counts now.
-- **"Comment" is decided lexically (v0.26.0).** A `#` or `//` is only a
-  comment when the lexer says so, which cuts both ways. A neighbouring
-  `API = "https://api.example.com"` no longer counts as a rationale — that
-  `#`-free URL used to register as a comment containing `example`, which
-  disabled this detector at exactly the place credentials cluster. In the
-  other direction, `/* … */` block comments and own-line docstrings now
-  count, and a token sitting inside an ordinary data string does not.
-  The Chinese forms above were added in the same release: only the noun
-  `原因` had been listed, so the most natural Chinese spelling (`因为`)
-  was rejected while English `because` passed — in a Chinese-primary repo.
+comment**: the tokens of rule 09's hatch (`because` / `why` / `因为` /
+`原因` …) plus `essential` / `必须` / `必需` / `example` / `fixture` /
+`placeholder` / `占位` / `sample` / `test data`. Only comment text counts,
+and "comment" is decided lexically — a `#` inside a URL is not one; a
+`/* … */` block or an own-line docstring is. A bare secret with no
+rationale = the non-essential case = **DENY**.
 
 ## Must do (MUST)
 
@@ -153,8 +93,8 @@ this section described neither:
 | Relationship | Note |
 |---|---|
 | 10 vs 03 | 03 says fix the root cause; 10 makes "the value belongs in config, not code" a hard, write-time root-cause fix for the secret class. |
-| 10 vs 09 | Same mechanism (PreToolUse content detector with a why-comment escape hatch); 09 targets suppression markers, 10 targets hardcoded secrets. |
-| 10 vs 11 | Sibling detectors added together (v0.22); 10 is *what* is inlined (secrets), 11 is *where* it points (machine-specific paths). |
+| 10 vs 09 | Same mechanism (write-time content detector with a why-comment escape hatch); 09 targets suppression markers, 10 targets hardcoded secrets. |
+| 10 vs 11 | Sibling detectors; 10 is *what* is inlined (secrets), 11 is *where* it points (machine-specific paths). |
 
 ## Self-check triggers
 

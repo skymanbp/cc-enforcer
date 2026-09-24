@@ -6,6 +6,8 @@ severity: must
 
 # Rule 12 — Repo-wide sync: co-update every reference
 
+**Enforced by:** `Stop` layer (i) — BLOCK when an edit turn touched a file matching a `when` glob of the project's `.claude/cc-enforcer/sync-gate.toml`, no `require` file was edited, and the reply carries no informed `sync-check:` / `同步核对:` line for that group (placeholders such as `n/a` / `无` / `-` count as absent; a marker inside a code fence or blockquote is a quotation, not a claim). Opt-in per project — no config file, no layer — and the loader fails open. Like every Stop layer, (i) is forgiven once per recovery sequence while the other layers stay live.
+
 ## Principle
 
 > **An edit is not finished when the target file is correct — it is
@@ -16,13 +18,12 @@ severity: must
 > on demand for stale, outdated, redundant, wrong, and drifted content.
 
 Editing one file and walking away is the single highest-yield laziness
-pattern this rule pack had not yet made physical: the code changes, the
-README still describes the old behavior, the downstream caller still
-passes the old argument, the translation still mirrors the old text,
-the test still pins the old count. Every one of those is a lie the repo
-now tells its next reader. Rule 04/08 already force reading the
-connected files *before* the edit; rule 12 forces *writing* (or
-explicitly clearing) them after.
+pattern: the code changes, the README still describes the old behavior,
+the downstream caller still passes the old argument, the translation
+still mirrors the old text, the test still pins the old count. Every one
+of those is a lie the repo now tells its next reader. Rule 04/08 already
+force reading the connected files *before* the edit; rule 12 forces
+*writing* (or explicitly clearing) them after.
 
 ## Scope — two halves
 
@@ -67,30 +68,32 @@ note = "Editing a rule fans out to the injected prompts + the index."
 
 Semantics: if any file edited this session matches a `when` glob and
 the `require` side is not satisfied, Stop layer (i) blocks the
-done-claim — unless the reply explicitly acknowledges the check with a
-sync marker (`同步核对` / `sync-check` / `rule 12`). An optional
-`mode = "all"` demands *every* `require` glob be matched by some edit
-(for lock-step invariants like version manifests); the default `"any"`
-is satisfied by one. The escape hatch is deliberate: "I checked the
-require side and it needs no change because X" is a legitimate outcome;
-the gate forces the check to be *said*, not the files to be touched
-blindly. **v0.27**: a marker settles only the groups you have actually
-been shown, so the flow is "blocked once, group named, then answered".
-One *informed* answer per group is the contract; one blanket sentence
-covering groups you never considered is not.
-**v0.32**: the marker must also be *yours* and must *say something*. A
-marker inside a code fence or a blockquote is quoted material, not your
-claim, and a placeholder value — `n/a`, `无`, `-`, or an empty one — is
-treated as absent and still BLOCKS. The bottom tier only: `sync-check:
-checked it` is equally empty and is still accepted, because refusing an
-honest report costs more than missing a lazy one.
-An acknowledged group is remembered for the session
-(`sync_acked_groups`), so one explicit answer suffices and later
-unrelated edits are not re-blocked by it. Globs match project-relative
-paths (fnmatch; `*` crosses separators). No config file → the gate is
-off for that project (opt-in). The gate is a floor, not the ceiling:
-groups encode the *known* invariants; the discipline above still covers
-the rest.
+done-claim — unless the reply answers the check with a sync marker
+(`同步核对` / `sync-check` / `rule 12`). An optional `mode = "all"`
+demands *every* `require` glob be matched by some edit (for lock-step
+invariants like version manifests); the default `"any"` is satisfied by
+one. The escape hatch is deliberate: "I checked the require side and it
+needs no change because X" is a legitimate outcome; the gate forces the
+check to be *said*, not the files to be touched blindly. Three
+properties keep the hatch honest:
+
+- A marker settles only the groups a previous block *named*, so the
+  flow is "blocked once, group named, then answered" — one *informed*
+  answer per group, never one blanket sentence covering groups you never
+  considered.
+- The marker must be *yours* and must *say something*: a marker inside a
+  code fence or a blockquote is quoted material, not your claim, and a
+  placeholder value — `n/a`, `无`, `-`, or an empty one — is treated as
+  absent. Only that bottom tier is refused: `sync-check: checked it` is
+  equally empty and is still accepted, because refusing an honest report
+  costs more than missing a lazy one.
+- An acknowledged group is remembered for the session, so one explicit
+  answer suffices and later unrelated edits are not re-blocked by it.
+
+Globs match project-relative paths (fnmatch; `*` crosses separators). No
+config file → the gate is off for that project (opt-in). The gate is a
+floor, not the ceiling: groups encode the *known* invariants; the
+discipline above still covers the rest.
 
 ## Active half — whole-repo refresh
 
@@ -110,17 +113,6 @@ already there. The `repo-refresh` skill (auto-invoked on `全库更新` /
 Every finding must carry `file:line` evidence and be either fixed or
 explicitly reported — a scan that only produces vibes is a rule 01
 violation.
-
-## Physical interception (hooks)
-
-| Layer | Hook | Trigger | Action |
-|---|---|---|---|
-| **Stop closing** | `Stop` **layer (i)** | edit turn + a configured `when` group matched with no `require` edit and no sync marker in the reply | **BLOCK** |
-
-Layer (i) is per-project opt-in (no `sync-gate.toml` → never fires),
-edit-turns only, and covered by the same one-shot guard / 3-turn grace
-window as every other Stop layer. Loader and evaluator are
-failing-open: a malformed config can never block by accident.
 
 ## Must do (MUST)
 

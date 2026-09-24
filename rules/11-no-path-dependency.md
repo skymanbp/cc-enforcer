@@ -6,6 +6,8 @@ severity: must
 
 # Rule 11 — No non-essential path dependency
 
+**Enforced by:** `PreToolUse(Edit|Write)` — DENY when new code carries a user-home absolute path (`C:\Users\<name>\…`, `/home/<name>/…`, `/Users/<name>/…`, with raw or escaped separators), a literal `$HOME` / `%USERPROFILE%`, or a quoted `~/…` — unless an adjacent comment carries a rationale token. System roots, bare drive letters and relative paths are not flagged; prose documents and lockfiles are not scanned.
+
 ## Principle
 
 > **A filesystem path that is specific to one machine, one user, or one
@@ -16,22 +18,22 @@ severity: must
 
 A machine-specific absolute path is a portability landmine: it works on
 the author's box and breaks on every other machine, CI runner, and
-container. This repo lived that failure — **v0.21.1** was a hotfix for a
+container. This repo lived that failure — a hotfix once repaired a
 Windows path-portability bug in its *own* hook (a `~`-containing runner
 `$TEMP` the path regex could not parse). Rule 11 makes "don't hardcode a
 user-home path" a write-time, root-cause discipline (rule 03).
 
-## What is hard-enforced (and what is not)
+## Scope — user-home roots are the hard class
 
-Faithful to the conservative-detector philosophy (prefer false
-negatives to false positives), only
-paths anchored at a **user-specific root** are hard-enforced — the class
-that is almost never legitimately portable:
+Faithful to the conservative-detector philosophy (prefer false negatives
+to false positives), only paths anchored at a **user-specific root** are
+refused at write time — the class that is almost never legitimately
+portable:
 
 | Class | Hard-enforced? |
 |---|---|
-| Windows user-home absolute path (`C:\Users\name\…`) | ✅ yes |
-| POSIX user-home absolute path (`/home/name/…`, `/Users/name/…`) | ✅ yes |
+| Windows user-home absolute path (`C:\Users\<name>\…`, raw or escaped separators) | ✅ yes |
+| POSIX user-home absolute path (`/home/<name>/…`, `/Users/<name>/…`) | ✅ yes |
 | Shell home variable in a literal (`$HOME`, `%USERPROFILE%`) | ✅ yes |
 | User-home tilde path in a string literal (`"~/…"`) | ✅ yes |
 | System paths (`/etc/…`, `/usr/…`, bare `C:\`) | ❌ soft guidance only |
@@ -39,71 +41,30 @@ that is almost never legitimately portable:
 
 System roots and bare drive letters are deliberately *not* flagged: they
 are often legitimately fixed, and a hard detector for them would fire on
-correct code. Relative paths are the desired outcome, not a violation.
-
-## Physical interception (hooks)
-
-| Layer | Hook | Trigger | Action |
-|---|---|---|---|
-| **Edit/Write content** | `PreToolUse(Edit\|Write)` | `new_string` / `content` contains an unjustified user-specific absolute path | **DENY** |
-
-Prose docs (`.md` / `.markdown` / `.rst` / `.txt` / `.adoc` /
-`.asciidoc`) and lockfiles are **exempt** — this repo's own docs are
-full of illustrative `C:\Users\skyma\…` paths, and lockfiles
-legitimately record absolute resolved paths. The detector targets
-freshly authored *code*. (The `requirements*.txt` / `constraints*.txt`
-carve-out from rule 10 applies here too — the exemption logic is
-shared.)
-
-### Detector catalog
-
-The following, when present in the incoming content **without an adjacent
-"why" rationale**, are intercepted:
-
-| Pattern | Example (illustrative) |
-|---|---|
-| Windows user-home path (raw **or** escaped separators) | `C:\Users\skyma\data.csv` |
-| POSIX user-home path | `/home/alice/proj/` |
-| shell home variable literal | `$HOME`, `%USERPROFILE%` |
-| tilde path in a quote | `"~/proj/data"` |
-
-**Escaped separators count (v0.25.1).** The Windows pattern used a
-single-character separator class, so it only ever matched a raw spelling.
-In real Python / JSON / JavaScript source the separator is **doubled** —
-that is how a user-home path actually appears in committed code — and the
-detector caught the rare form while waving through the normal one, on the
-platform this rule pack is most often run on.
+correct code. Relative paths are the desired outcome, not a violation. A
+`/home/<x>/` segment glued to a hostname is not flagged either — in
+`https://host.test/home/alice/dashboard` it is a URL route, not a
+filesystem path — while a `file:///home/…` URI still matches, because
+that IS a machine path. Prose documents and lockfiles are exempt: docs
+carry illustrative paths, and lockfiles legitimately record resolved
+absolute ones (the `requirements*.txt` / `constraints*.txt` carve-out
+from rule 10 applies here too).
 
 The portable alternatives the detector wants you to reach for:
-`Path(__file__).resolve().parent…`, `os.environ["CC_PLUGIN_DATA"]`,
+`Path(__file__).resolve().parent…`, `os.environ["CLAUDE_PLUGIN_DATA"]`,
 `Path.home()` computed at runtime (not a literal), a CLI argument, or a
 path relative to the repo root.
 
-A `/home/<x>/` segment glued to a hostname is NOT flagged (v0.24): in
-`https://host.test/home/alice/dashboard` it is a URL route, not a
-filesystem path (the POSIX pattern rejects matches preceded by a
-word / dot / dash character). A `file:///home/…` URI still matches —
-that IS a machine path.
-
-### Escape hatch — operationalizing "non-essential"
+## Marking an essential path
 
 The user's scope is *non-essential* path dependency. An essential,
 genuinely-fixed path (a documented example, a test fixture pinned to a
 known layout, a platform path that truly cannot move) is allowed through
 when the offending line, or an immediately adjacent line (±1), carries a
-rationale token **inside a comment**: `because` / `原因` / `因为` /
-`之所以` / `理由` / `故意` / `刻意` / `essential` / `必须` / `必需` /
-`example` / `fixture` / `placeholder` / `占位` / `sample` / `test data`,
-plus the shared leads (`see issue` / `tracking` / `intentional` /
-`third-party` / `per spec` …). A bare user-home path with no rationale =
-the non-essential case = **DENY**.
-
-The hatch is shared with rules 09 and 10, and the same two corrections
-apply — see [rule 10's escape hatch](10-no-hardcoding.md) for the detail:
-the token must be **comment text** (v0.25.1, so `reason = compute()` no
-longer silences a detector), and **"comment" is decided lexically**
-(v0.26.0, so a `#` inside a URL is not one, while `/* … */` blocks and
-own-line docstrings are). The Chinese forms were added in v0.26.0 as well.
+rationale token **inside a comment** — the same hatch, and the same token
+list, as rule 10 (`because` / `因为` / `essential` / `example` /
+`fixture` / `placeholder` / `sample` / `test data` …). A bare user-home
+path with no rationale = the non-essential case = **DENY**.
 
 ## Must do (MUST)
 
@@ -126,8 +87,8 @@ own-line docstrings are). The Chinese forms were added in v0.26.0 as well.
 | Relationship | Note |
 |---|---|
 | 11 vs 03 | 03 says fix the root cause; 11 makes "derive the path, don't hardcode the machine" a hard, write-time portability fix. |
-| 11 vs 09 | Same mechanism (PreToolUse content detector with a why-comment escape hatch); 09 targets suppression markers, 11 targets machine-specific paths. |
-| 11 vs 10 | Sibling detectors added together (v0.22); 10 is *what* is inlined (secrets), 11 is *where* it points (machine-specific paths). |
+| 11 vs 09 | Same mechanism (write-time content detector with a why-comment escape hatch); 09 targets suppression markers, 11 targets machine-specific paths. |
+| 11 vs 10 | Sibling detectors; 10 is *what* is inlined (secrets), 11 is *where* it points (machine-specific paths). |
 
 ## Self-check triggers
 

@@ -6,6 +6,8 @@ severity: must
 
 # 规则 06 — 验证收敛（post-fix verify-and-converge）
 
+**强制执行：** `Stop` layer (a) —— 完成声明不带证据（`$ 命令 → 输出` 行、测试运行摘要或围栏输出块）即 BLOCK；`Stop` layer (c) —— 回复既无收敛标记（`convergence` / `rule 06` / `self-quiz` / `收敛` / `自答`）、也没有下面四问中两问的答案，即 BLOCK。
+
 ## 原则
 
 **改完不等于解决。** 任何修复、更新、补丁完成后，**必须**主动验证修改真的根除了问题；

@@ -6,6 +6,8 @@ severity: must
 
 # Rule 07 — Task fidelity (request coverage / no-degrade)
 
+**Enforced by:** `Stop` layer (d) — BLOCK when a done-claim carries no fidelity marker (`rule 07` / `task fidelity` / `request coverage` / `no scope creep` / `任务忠实` / `原始请求` …) and fewer than two of the three self-quiz answers below. Decomposing the request is text-level discipline.
+
 ## Principle
 
 **Fixed it ≠ done.** Rule 06 checks "did the part I edited technically converge?". Rule 07 checks "did I do **everything the user asked for**, at the **standard they asked for**?".
@@ -62,6 +64,8 @@ For every modifier the user used, prove the standard was met:
 If the user said "mandatory" but you shipped "soft suggestion", that's a degrade — fix it or actively tell the user.
 
 ### Check 4 — No scope creep
+
+**Minimum effective change**, defined once here: the smallest set of edits that fully resolves the request at the standard asked for — nothing the request does not need (no drive-by refactors, renames, abstractions or reformatting), and nothing less than what closes the root cause (rule 03). Small is not the goal; sufficient and no wider is.
 
 - Did you do refactors / renames / abstractions the user did not ask for? Without asking? That violates "minimum effective change" — and it's rule 07's territory.
 - Did you touch files unrelated to this task? List them; they should be a separate PR / commit, or at minimum disclosed in the wrap-up.

@@ -6,6 +6,8 @@ severity: must
 
 # 规则 01 — 验证而非猜测
 
+**强制执行：** `Stop` layer (b) —— 完成声明 50 字符内出现第一人称含糊词（`I think` / `I believe` / `maybe` / `probably` / `我觉得` / `应该是`）即 BLOCK；`Stop` layer (g) —— 回复声称改了 / 建了某文件而它的 mtime 本轮未动即 BLOCK。本规则其余内容是文本层纪律。
+
 ## 原则
 
 任何关于**文件、API、符号、版本号、报错信息、文献引用**的断言，**必须当场验证**。

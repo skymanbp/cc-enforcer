@@ -13,11 +13,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-**The injection, the start-up path, the guard messages and the documentation,
-slimmed and put in order.** Four commits after v0.39.2, one per concern. No
-hook's enforcement semantics change: what is denied, blocked, forgiven or
-recorded is byte-identical, and every rewrite below is pinned by a test that
-says so.
+**The injection, the start-up path, the guard messages, the documentation and
+the rules pack, slimmed and put in order.** Five commits after v0.39.2, one per
+concern. No hook's enforcement semantics change: what is denied, blocked,
+forgiven or recorded is byte-identical, and every rewrite below is pinned by a
+test that says so.
 
 ### Prompt injection: a contract and a reminder, not two contracts
 
@@ -133,6 +133,31 @@ narrative and its duplicated principles; Contributing and the release checklist
 move to `docs/CONTRIBUTING.md`; `docs/RULES.md` is a catalog again;
 `docs/README.md` no longer claims the documents never repeat each other;
 `tests/README.md` is an inventory with live counts. History lives in this file.
+
+### The rules pack states the discipline; one line per rule states the hook
+
+`rules/` is presented as a portable, LLM-agnostic discipline pack, and a fifth
+of it was hook implementation: rule 09 alone carried a 10k-character "Physical
+interception" section — the rolling-patch classifier table, the patch-marker
+regex catalogue, the detector-fix history from v0.25 to v0.26 — and rules 03,
+08, 10, 11 and 12 carried their own hook tables and 55 version notes between
+them. Every rule now opens with one **Enforced by** line under its title, in
+both languages, that says which hook intercepts it and on what (rule 09's names
+the seven Bash tokens; the doc gate now pins rule 03's line to the same
+inventory), and the hook sections and version notes are gone. Facts corrected
+on the way: rule 08 no longer counts `global` among layer (e)'s keywords or
+describes the trigger as a turn-count comparison; rule 09's "1–3 lines" is the
+hook's ≤ 10-line bound; rule 10's "10+ chars" is the detector's 8; rule 11
+names `CLAUDE_PLUGIN_DATA` (not `CC_PLUGIN_DATA`) and no longer quotes a
+maintainer's home path; rule 12 describes per-layer grace instead of the
+retired one-shot guard; "minimum effective change" is defined once, in rule 07
+check 4, where six sites already pointed. The English pack goes from 89.0k to
+79.5k characters (rule 09: 21.8k → 14.0k) and the Chinese mirror from 83.3k to
+74.2k, with identical heading sequences and the same enforcement tokens.
+`commands/checklist.md` (17.7k → 12.2k) keeps its eight sections, the closed
+patch-marker set, the output format and the items with no rule-text
+counterpart, and stops restating the rules and the prompts; its description
+now counts eight sections, and its example reads "layer (a)–(i)".
 
 ### Decisions recorded, not made
 

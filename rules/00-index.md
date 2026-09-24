@@ -21,7 +21,11 @@ severity: info
 > cat rules/*.md > /tmp/cc-enforcer.txt
 > ```
 >
-> then prepend that file to your agent's system prompt.
+> then prepend that file to your agent's system prompt. Each rule states
+> the discipline; the one **Enforced by** line under its title says which
+> cc-enforcer hook, if any, physically intercepts it — drop that line when
+> the pack runs without the hooks. `wc -c rules/*.md` gives the current
+> size of the pack.
 
 ## Rule list
 

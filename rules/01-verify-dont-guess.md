@@ -6,6 +6,8 @@ severity: must
 
 # Rule 01 — Verify, don't guess
 
+**Enforced by:** `Stop` layer (b) — BLOCK when a first-person hedge (`I think` / `I believe` / `maybe` / `probably` / `我觉得` / `应该是`) sits within 50 characters of a done-claim; `Stop` layer (g) — BLOCK when the reply claims to have edited or created a file whose mtime never moved this turn. The rest of this rule is text-level discipline.
+
 ## Principle
 
 Any claim about a **file, API, symbol, version number, error message, or
