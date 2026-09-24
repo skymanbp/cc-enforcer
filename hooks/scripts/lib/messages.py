@@ -34,25 +34,18 @@ exist, which is the defect class v0.35.1 was about.
 from __future__ import annotations
 
 import importlib
-import os
 import sys
 
-DEFAULT_LANG = "en"
+from . import lang as lang_lib
+
+DEFAULT_LANG = lang_lib.DEFAULT
 _MODULE_PREFIX = "messages_"
 
 _cache: dict[str, str] | None = None
 
-
-def _lang() -> str:
-    """The active language code, lower-cased; empty/unset means English.
-
-    Same switch and same defaulting as `inject_context._resolved_lang`,
-    deliberately duplicated in spirit rather than imported: that module
-    is a hook entry point, and importing an entry point from a shared
-    library to read one environment variable would invert the dependency
-    direction for no gain.
-    """
-    return (os.environ.get("CC_ENFORCER_LANG") or "").strip().lower() or DEFAULT_LANG
+# The active language code — one definition for the whole plugin
+# (`lib/lang.py`); kept under this name for the module's own call sites.
+_lang = lang_lib.resolve
 
 
 def _load(lang: str) -> dict[str, str]:

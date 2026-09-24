@@ -51,27 +51,41 @@ removing — the second copy is always the one that misses the next fix.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
-
-try:
-    # because the ignore is unused on 3.11+ where tomllib resolves
-    import tomllib  # type: ignore[unused-ignore]
-except ModuleNotFoundError:
-    # because Python < 3.11 has no tomllib and every caller must fail open
-    tomllib = None  # type: ignore[assignment]
 
 # UTF-8 byte-order mark.
 _UTF8_BOM = b"\xef\xbb\xbf"
 
+# `tomllib` is imported on first use, not at module load (v0.40). Every
+# hook imports this module, and most invocations never parse a config —
+# a project without edicts.toml / sync-gate.toml, or a plain Read — yet
+# each one paid the ~10 ms the parser package costs to import. The probe
+# result is cached so the cost is paid at most once per process, and only
+# by a process that actually reads TOML.
+_tomllib = None
+_probed = False
 
-def parse_toml_file(
-    path: Path, warn: Callable[[str], None],
-) -> dict | None:
+
+def _module():
+    """The `tomllib` module, or None on an interpreter that lacks it."""
+    global _tomllib, _probed
+    if not _probed:
+        _probed = True
+        try:
+            import tomllib as _t  # noqa: PLC0415 -- because the import is deferred on purpose; see above
+            _tomllib = _t
+        except ModuleNotFoundError:
+            # because Python < 3.11 has no tomllib and every caller must fail open
+            _tomllib = None
+    return _tomllib
+
+
+def parse_toml_file(path: Path, warn) -> dict | None:
     """Read + parse a TOML config; None (with a diagnostic) on any failure.
 
     `warn` is the caller's stderr-diagnostic function so the message keeps
     that module's prefix (e.g. "[cc-enforcer edicts]").
     """
+    tomllib = _module()
     if tomllib is None:
         return None
     try:
@@ -100,12 +114,12 @@ def parse_toml_file(
 def available() -> bool:
     """True when TOML parsing is possible at all (Python 3.11+).
 
-    Every caller previously carried its own `try: import tomllib` sentinel
-    purely to answer this, which put three copies of the same fallback in
-    the tree while the actual parsing already funnelled through this
-    module. (v0.31)
+    The one place that answers this. `lib/edicts.py` and `lib/sync_gate.py`
+    carried their own `try: import tomllib` sentinels alongside this
+    function until v0.40 — three copies of one fallback, and each of them
+    imported the parser at module load for every hook invocation.
     """
-    return tomllib is not None
+    return _module() is not None
 
 
 def basic_string(s: str) -> str:
@@ -147,6 +161,7 @@ def dumps_check(text: str) -> str | None:
     silent, total failure (an unparseable config disables every rule it
     holds) into a loud, local one.
     """
+    tomllib = _module()
     if tomllib is None:
         return None
     try:

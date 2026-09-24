@@ -37,17 +37,16 @@ allowed. A bug in this guard cannot block the agent.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sys
-import traceback
 from pathlib import Path
 
-# Import the same state library read_guard uses, so registrations land in
-# the same state files. `lib/` is alongside this script.
+# `lib/` is alongside this script. The state library (the same one
+# read_guard uses, so registrations land in the same state files) and
+# `hashlib` are imported on the register_read path only (v0.40): every
+# other Bash call is a read-only scan and paid for both.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib import state as state_lib  # noqa: E402
 # E402 is suppressed on every lib import below because they must follow
 # the sys.path bootstrap above -- that is the stated reason, not laziness.
 from lib import edicts as edicts_lib  # noqa: E402
@@ -214,8 +213,11 @@ STATIC_PATTERNS = [
 # to prove it is unreachable before they can trust the one below it.
 
 
-def _detect_force_push(cmd: str) -> dict | None:
+def _detect_force_push(cmd: str, segments: list[list[str]] | None = None) -> dict | None:
     """Detect `git push --force` (or `-f` / `-fu` / …) without `--force-with-lease`.
+
+    `segments` is the command already split by `shellcmd.segments`; main()
+    passes its own so one command is tokenised once, not three times.
 
     `--force-with-lease` is the safe variant: it refuses to overwrite if the
     remote moved underneath you. We allow it; we only block the unconditional
@@ -253,7 +255,7 @@ def _detect_force_push(cmd: str) -> dict | None:
     that follows it.
     """
     hit = False
-    for argv in shellcmd.segments(cmd):
+    for argv in (shellcmd.segments(cmd) if segments is None else segments):
         if shellcmd.command_name(argv) not in ("git", "git.exe"):
             continue
         subcommand, args = shellcmd.git_subcommand(argv)
@@ -346,13 +348,16 @@ _REGISTER_SCRIPT_NAME = "register_read.py"
 # (`lib/shellcmd.tokenize`) and in the CHANGELOG, not in a dead wrapper.
 
 
-def _parse_register_invocation(command: str) -> dict | None:
+def _parse_register_invocation(
+    command: str, segments: list[list[str]] | None = None,
+) -> dict | None:
     """If `command` is a register_read.py invocation, return parsed args.
 
     Returns a dict {"file": str, "hash": str} on success, or None if the
     command is not a register invocation. Tolerates malformed register
     invocations by returning None (the regular bypass-pattern checks then
     apply, and the script call itself will fail at argparse time).
+    `segments` is the already-tokenised command, when the caller has it.
 
     v0.25 — the `--flag=value` spelling is now understood. register_read.py
     parses its own argv with argparse, which accepts both `--file X` and
@@ -381,7 +386,7 @@ def _parse_register_invocation(command: str) -> dict | None:
     # registration. (`&&`, `||`, `|`, `;`, backgrounding and substitution
     # all produce extra segments.) The command is not denied; it simply
     # earns no credit, and the real script still runs and reports.
-    parsed = shellcmd.segments(command)
+    parsed = shellcmd.segments(command) if segments is None else segments
     non_empty = [a for a in parsed if a]
     if len(non_empty) != 1:
         return None
@@ -426,6 +431,7 @@ def _parse_register_invocation(command: str) -> dict | None:
 
 
 def _compute_sha256(path: Path) -> str:
+    import hashlib  # because only the register_read hatch hashes anything
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
@@ -433,7 +439,9 @@ def _compute_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _handle_register_invocation(command: str, session_id: str):
+def _handle_register_invocation(
+    command: str, session_id: str, segments: list[list[str]] | None = None,
+):
     """Process a register_read.py invocation.
 
     Returns:
@@ -441,7 +449,7 @@ def _handle_register_invocation(command: str, session_id: str):
         False -- registration failed; this function already emitted DENY
         None  -- command is not a register invocation
     """
-    parsed = _parse_register_invocation(command)
+    parsed = _parse_register_invocation(command, segments)
     if parsed is None:
         return None
 
@@ -494,6 +502,7 @@ def _handle_register_invocation(command: str, session_id: str):
     # that the registration had silently evaporated. Deny loudly instead:
     # a failed registration the agent knows about is recoverable, a
     # successful-looking one that did nothing is not.
+    from lib import state as state_lib  # because only a registration touches session state
     if not state_lib.add_read(session_id, str(fpath)):
         _emit_register_deny(
             command,
@@ -574,8 +583,12 @@ def main() -> int:
         session_id = payload.get("session_id") or "default"
 
         # Static patterns first, evaluated per shell segment against argv
-        # (v0.26.0) rather than against the raw command string.
-        for argv in shellcmd.segments(command):
+        # (v0.26.0) rather than against the raw command string. Tokenised
+        # once here and handed to every later check (v0.40): the same
+        # command used to be split three times, and on a large heredoc
+        # each split costs about as much as the rest of the hook.
+        segments = shellcmd.segments(command)
+        for argv in segments:
             if not argv:
                 continue
             if shellcmd.command_name(argv) in _INERT_COMMANDS:
@@ -589,7 +602,7 @@ def main() -> int:
                     return 0
 
         # Compound: git push --force without --force-with-lease.
-        fp = _detect_force_push(command)
+        fp = _detect_force_push(command, segments)
         if fp:
             _emit_deny(command, fp["name"], fp["rule"], fp["explanation"])
             return 0
@@ -610,7 +623,7 @@ def main() -> int:
 
         # Read-cache escape hatch: register-as-read invocation. Reached
         # only when the command cleared every deny check above.
-        reg_handled = _handle_register_invocation(command, session_id)
+        reg_handled = _handle_register_invocation(command, session_id, segments)
         if reg_handled is False:
             return 0  # DENY emitted (bad hash / missing file / bad args)
         # True  -> registration succeeded; ALLOW (stub script will run).
@@ -618,6 +631,7 @@ def main() -> int:
 
         # No bypass detected; allow by exiting silently.
     except Exception:
+        import traceback  # because only this failing-open path formats one
         sys.stderr.write("[cc-enforcer] bash_guard exception:\n")
         sys.stderr.write(traceback.format_exc())
     return 0

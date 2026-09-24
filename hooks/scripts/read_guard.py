@@ -72,7 +72,6 @@ import json
 import os
 import re
 import sys
-import traceback
 from pathlib import Path
 
 # Make `lib/` importable when run directly as a script.
@@ -947,7 +946,10 @@ def _handle_pre_tool_use(payload: dict) -> None:
 
     # Load edicts once per invocation (v0.12). Cheap (one disk read of a
     # small TOML file) and avoids stale state between Edits in the same
-    # session if the user is iterating on edicts.toml.
+    # session if the user is iterating on edicts.toml. Loaded here, ahead
+    # of the read-before-edit check, on purpose: a mis-encoded file's
+    # diagnostic must reach stderr on every Edit / Write, denied or not
+    # (test_edicts.TestEdictsFileEncoding pins that).
     loaded_edicts = edicts_lib.load()
 
     def _check_edicts(content: str) -> None:
@@ -1192,6 +1194,7 @@ def main() -> int:
     except Exception:
         # Failing open: log and exit 0 so the agent is never blocked
         # by a bug in our own guard.
+        import traceback  # because only this failing-open path formats one
         sys.stderr.write("[cc-enforcer] read_guard exception:\n")
         sys.stderr.write(traceback.format_exc())
     return 0

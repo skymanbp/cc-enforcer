@@ -11,9 +11,9 @@ separate scripts: read_guard.py and bash_guard.py on PreToolUse,
 stop_guard.py on Stop.
 
 Why one script for both injection events instead of two:
-  Per CLAUDE.md §2.6 (minimum effective change), two near-identical
-  scripts is duplication. A single dispatch on --event is the smallest
-  surface that still keeps each event's contract explicit.
+  Two near-identical scripts would be duplication (rule 09). A single
+  dispatch on --event is the smallest surface that still keeps each
+  event's contract explicit.
 
 Why Python (not bash):
   Hook scripts must run on Windows / macOS / Linux without a guaranteed
@@ -36,25 +36,27 @@ blocking decision belongs to the three guard scripts named above.
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import re
 import sys
 from pathlib import Path
 
-# Make `lib/` importable when run directly as a script.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib import edicts as edicts_lib  # noqa: E402 — sys.path mutated above
-from lib import envfile as envfile_lib  # noqa: E402 — sys.path mutated above
-from lib import hookio  # noqa: E402 — sys.path mutated above
-from lib import state as state_lib  # noqa: E402 — sys.path mutated above
+_HERE = Path(__file__).resolve()
 
-# v0.18: lazy import only when auto-GC actually triggers (kept None
-# until first use). Reason: SessionStart latency matters; the import
-# tree pulls in `time` which is cheap, but the lookup itself only
-# pays for users who opted into CC_ENFORCER_AUTO_GC_DAYS.
-_gc_state_mod = None
+# Make `lib/` importable when run directly as a script.
+sys.path.insert(0, str(_HERE.parent))
+from lib import edicts as edicts_lib  # noqa: E402 — sys.path mutated above
+from lib import hookio  # noqa: E402 — sys.path mutated above
+from lib import lang as lang_lib  # noqa: E402 — sys.path mutated above
+
+# `lib.state`, `lib.envfile` and `gc_state` are imported inside the
+# SessionStart maintenance branch, by the passes that use them (v0.40).
+# This script runs on EVERY user prompt and the per-turn path needs none
+# of the three; importing them up front charged every prompt for work
+# that only SessionStart does. `argparse` went the same way: it imports
+# shutil (and through it bz2 and lzma) to measure the terminal, ~10 ms
+# per prompt for one flag with two legal values — see _parse_event.
 
 # --------------------------------------------------------------------------- #
 # Event → prompt file mapping.
@@ -68,7 +70,7 @@ EVENT_TO_PROMPT: dict[str, str] = {
 # Plugin root resolution:
 #   This script lives at  <plugin-root>/hooks/scripts/inject_context.py
 #   So plugin root is two levels up from __file__.
-PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+PLUGIN_ROOT = _HERE.parents[2]
 PROMPTS_DIR = PLUGIN_ROOT / "prompts"
 
 # --------------------------------------------------------------------------- #
@@ -83,18 +85,14 @@ PROMPTS_DIR = PLUGIN_ROOT / "prompts"
 # skeleton — fail-safe to the source-of-truth language, never silently
 # miss the injection.
 # --------------------------------------------------------------------------- #
-DEFAULT_LANG = "en"
+DEFAULT_LANG = lang_lib.DEFAULT
 
-
-def _resolved_lang() -> str:
-    """Return the active language code.
-
-    Defaults to the English skeleton (DEFAULT_LANG); any non-empty
-    CC_ENFORCER_LANG value passes through verbatim (lower-cased). No
-    membership gate — resolution + fallback happen in load_prompt() /
-    edicts, so an unregistered code degrades gracefully to English.
-    """
-    return (os.environ.get("CC_ENFORCER_LANG") or "").strip().lower() or DEFAULT_LANG
+# One definition of "the active language" for the whole plugin
+# (`lib/lang.py`, v0.40): any non-empty CC_ENFORCER_LANG passes through
+# lower-cased, no membership gate — resolution + fallback happen in
+# load_prompt() / edicts, so an unregistered code degrades to English.
+# Kept under this name for the call sites and the tests that reach for it.
+_resolved_lang = lang_lib.resolve
 
 
 def load_prompt(filename: str) -> str:
@@ -298,17 +296,29 @@ def emit(event_name: str, additional_context: str) -> None:
     sys.stdout.buffer.flush()
 
 
+def _parse_event(argv: list[str]) -> str:
+    """The `--event <name>` argument, or exit 2 with a usage line.
+
+    Same contract argparse gave this script — a missing or unknown event
+    is a usage error on stderr with exit status 2 — without importing
+    argparse (see the note under the imports).
+    """
+    choices = sorted(EVENT_TO_PROMPT)
+    if len(argv) == 3 and argv[1] == "--event" and argv[2] in choices:
+        return argv[2]
+    if (len(argv) == 2 and argv[1].startswith("--event=")
+            and argv[1][len("--event="):] in choices):
+        return argv[1][len("--event="):]
+    sys.stderr.write(
+        f"usage: {os.path.basename(argv[0]) if argv else 'inject_context.py'}"
+        f" --event {{{','.join(choices)}}}\n"
+    )
+    sys.exit(2)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="cc-enforcer context injection hook",
-    )
-    parser.add_argument(
-        "--event",
-        required=True,
-        choices=sorted(EVENT_TO_PROMPT.keys()),
-        help="Which hook event this invocation corresponds to.",
-    )
-    args = parser.parse_args()
+    event = _parse_event(sys.argv)
+    is_session_start = event == "SessionStart"
 
     # Drain stdin if Claude Code piped hook input to us; reading prevents
     # a SIGPIPE on the parent side. v0.25.1: the payload is also where the
@@ -337,9 +347,11 @@ def main() -> int:
         # exclusion hint.
         # Rationale: a read failure must never block the injection.
         pass
-    session_id = _session_id_from(raw_payload)
+    # The session id is only ever consumed by auto-GC, which runs on
+    # SessionStart; parsing the payload on every prompt bought nothing.
+    session_id = _session_id_from(raw_payload) if is_session_start else None
 
-    prompt_filename = EVENT_TO_PROMPT[args.event]
+    prompt_filename = EVENT_TO_PROMPT[event]
     additional_context = load_prompt(prompt_filename)
 
     # Append 圣旨 / Imperial Edicts (user-defined edicts) to BOTH
@@ -365,8 +377,7 @@ def main() -> int:
         # sentences: SessionStart already explained must / should, and the
         # per-turn payload is re-sent on every prompt.
         block = edicts_lib.render_injection(
-            loaded, lang=_resolved_lang(),
-            chrome=(args.event == "SessionStart"),
+            loaded, lang=_resolved_lang(), chrome=is_session_start,
         )
         if block:
             edict_block = "\n" + block
@@ -385,11 +396,13 @@ def main() -> int:
     # exports (it fires per compact/resume), so deduping here bounds the
     # accumulation at one generation regardless of hook ordering. Both
     # maintenance passes are failing-open and never touch the payload.
-    if args.event == "SessionStart":
+    if is_session_start:
         _maybe_auto_gc(session_id)
+        # because SessionStart is the only event with a maintenance pass
+        from lib import envfile as envfile_lib
         envfile_lib.maybe_dedupe()
 
-    emit(args.event, build_context(
+    emit(event, build_context(
         prompt_filename, additional_context, edict_block,
     ))
     return 0
@@ -424,7 +437,6 @@ def _session_id_from(raw: str) -> str | None:
 # of how many sessions open. Failures are silent stderr — never block
 # the injection.
 # --------------------------------------------------------------------------- #
-_AUTO_GC_MARKER = "_auto_gc.json"
 _AUTO_GC_MIN_INTERVAL_SECONDS = 86400  # once per day
 
 
@@ -453,10 +465,11 @@ def _maybe_auto_gc(session_id: str | None = None) -> None:
         return  # 0 or negative explicitly disables
 
     # Rate limit: skip if we ran within the last 24h.
-    import json as _json
+    # because both are needed only on this opt-in, once-a-day pass
     import time as _time
+    from lib import state as state_lib
     try:
-        marker_path = state_lib.state_dir() / _AUTO_GC_MARKER
+        marker_path = state_lib.state_dir() / state_lib.AUTO_GC_MARKER
     except Exception as exc:
         sys.stderr.write(
             f"[cc-enforcer] auto-GC could not resolve state_dir: {exc}\n"
@@ -466,7 +479,7 @@ def _maybe_auto_gc(session_id: str | None = None) -> None:
     now = _time.time()
     if marker_path.is_file():
         try:
-            marker = _json.loads(marker_path.read_text(encoding="utf-8"))
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
             last_ts = marker.get("ts", 0) if isinstance(marker, dict) else 0
         except Exception:
             # Rationale: a corrupt marker file shouldn't prevent GC;
@@ -484,20 +497,18 @@ def _maybe_auto_gc(session_id: str | None = None) -> None:
         if now - last_ts < _AUTO_GC_MIN_INTERVAL_SECONDS:
             return  # rate-limited
 
-    # Lazy import gc_state on first real GC pass.
-    global _gc_state_mod
-    if _gc_state_mod is None:
-        try:
-            from . import gc_state as _gc  # type: ignore[import-not-found]  # because relative import inside script; falls through
-        except Exception:
-            try:
-                import gc_state as _gc  # because we sys.path.inserted scripts dir
-            except Exception as exc:
-                sys.stderr.write(
-                    f"[cc-enforcer] auto-GC could not import gc_state: {exc}\n"
-                )
-                return
-        _gc_state_mod = _gc
+    # `gc_state.py` lives beside this script and sys.path carries the
+    # scripts dir. Imported here, on the rare pass that actually prunes.
+    # A `from . import gc_state` attempt used to precede this and could
+    # never succeed — a script run as __main__ is not a package — so every
+    # pass paid for an ImportError before taking this branch (v0.40).
+    try:
+        import gc_state as _gc_state_mod  # because auto-GC is opt-in and rare
+    except Exception as exc:
+        sys.stderr.write(
+            f"[cc-enforcer] auto-GC could not import gc_state: {exc}\n"
+        )
+        return
 
     # Exclude the live session's own state file. v0.25.1 — this used to
     # pass None with the reasoning "the live session's file should be too
@@ -520,7 +531,7 @@ def _maybe_auto_gc(session_id: str | None = None) -> None:
     # were eligible. This is what makes the 24h rate limit work.
     try:
         marker_path.write_text(
-            _json.dumps({"ts": now, "deleted": summary["deleted"]}),
+            json.dumps({"ts": now, "deleted": summary["deleted"]}),
             encoding="utf-8",
         )
     except Exception as exc:

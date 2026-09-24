@@ -193,7 +193,7 @@ v0.38 起守卫**打印**的每一句话也进了这套体系：文案住在
 setx CC_ENFORCER_LANG zh          # Windows；POSIX 用 export
 ```
 
-[`hooks/scripts/`](hooks/scripts/) 下十个脚本，坐在十四个共享
+[`hooks/scripts/`](hooks/scripts/) 下十个脚本，坐在十五个共享
 [`lib/`](hooks/scripts/lib/) 模块上。只有上表那四个注册为钩子；另外六个
 （`register_read.py`、`manage_edicts.py`、`manage_sync_gate.py`、`gc_state.py`、
 `i18n_check.py`、`bench_hooks.py`）分别服务于逃生口、slash 命令、CI 与基准测试。
@@ -604,8 +604,9 @@ cc-enforcer/
 │       ├── gc_state.py          # 会话状态 GC：CLI + auto-GC 被调方
 │       ├── i18n_check.py        # 骨架 ↔ 翻译的结构对齐
 │       ├── bench_hooks.py       # 逐钩子延迟基准（README 第六节）
-│       └── lib/                 # -- 十四个共享模块 --
+│       └── lib/                 # -- 十五个共享模块 --
 │           ├── hookio.py        # 边界：stdin 载荷 → UTF-8，绝不走宿主机码页
+│           ├── lang.py          # 边界：当前语言码，一处解析、所有消费者共用
 │           ├── messages.py      # 边界：按 CC_ENFORCER_LANG 解析守卫文案
 │           ├── messages_en.py   #   英文骨架 —— 守卫会打印的每一句话
 │           ├── messages_zh.py   #   它的中文翻译（同键集、同占位符）
@@ -628,7 +629,7 @@ cc-enforcer/
 │   ├── run_demo.py              #   驱动真实钩子，捕获两份 transcript
 │   ├── render_svg.py            #   transcript → 终端风格 SVG，零依赖
 │   └── out/*.svg                #   已提交的图片，由 tests/test_demo.py 钉住
-└── tests/                       # 752 个测试（python -m unittest discover tests）
+└── tests/                       # 765 个测试（python -m unittest discover tests）
     │                            # 每个文件以它覆盖的对象命名 —— 见 tests/README.md
     ├── _helpers.py              #   共享 run_hook(...) 子进程夹具
     ├── test_<hook>.py           #   黑盒子进程测试，每个钩子入口一个
@@ -640,7 +641,7 @@ cc-enforcer/
     └── test_audit_*.py          #   历次审计轮的回归套件（v026 ×2、v027）
 ```
 
-全部脚本由 [`tests/`](tests/) 里的 **752 个测试**覆盖 —— 黑盒子进程测试完全按
+全部脚本由 [`tests/`](tests/) 里的 **765 个测试**覆盖 —— 黑盒子进程测试完全按
 Claude Code 的方式拉起每个钩子（脚本被 import 进来跑时，模块级状态、stdin、
 stdout 缓冲与退出码全都不同），外加共享模型的单元件与四道漂移门。
 

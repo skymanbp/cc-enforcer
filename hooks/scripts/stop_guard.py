@@ -180,7 +180,6 @@ import json
 import os
 import re
 import sys
-import traceback
 import unicodedata
 from pathlib import Path
 
@@ -189,13 +188,81 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import state as state_lib  # noqa: E402
 # E402 is suppressed on every lib import below because they must follow
 # the sys.path bootstrap above -- that is the stated reason, not laziness.
-from lib import sync_gate as sync_gate_lib  # noqa: E402
-# because the sys.path bootstrap above must run before this import
+# `lib.sync_gate` is imported by `_sync_gate()` on the edit-turn paths
+# that evaluate layer (i) (v0.40); every other Stop paid for it unused.
 from lib import mdctx  # noqa: E402
 # because the sys.path bootstrap above must run before this import
 from lib import hookio  # noqa: E402
 # because the sys.path bootstrap above must run before this import
 from lib import messages  # noqa: E402
+
+
+# --------------------------------------------------------------------------- #
+# Regexes compiled on first use.
+#
+# This module declares ~115 patterns at module level, and the Stop hook is
+# a fresh process on every turn. Compiling all of them up front cost
+# ~30 ms of the ~33 ms this file took to import (cProfile, v0.40 sweep) —
+# on a path where most invocations use only the done-claim set before
+# returning. `_rx` stands in for `re.compile`: the object answers the same
+# calls a compiled pattern does and compiles itself the first time one is
+# made, so a Stop pays only for the layers it actually evaluates. Anything
+# not spelled out below is delegated to the real pattern.
+# --------------------------------------------------------------------------- #
+class _LazyPattern:
+    __slots__ = ("_source", "_flags", "_compiled")
+
+    def __init__(self, source: str, flags: int = 0) -> None:
+        self._source = source
+        self._flags = flags
+        self._compiled = None
+
+    def _get(self) -> re.Pattern[str]:
+        compiled = self._compiled
+        if compiled is None:
+            compiled = self._compiled = re.compile(self._source, self._flags)
+        return compiled
+
+    @property
+    def pattern(self) -> str:
+        return self._source
+
+    @property
+    def flags(self) -> int:
+        return self._get().flags
+
+    def search(self, string, *args):
+        return self._get().search(string, *args)
+
+    def match(self, string, *args):
+        return self._get().match(string, *args)
+
+    def fullmatch(self, string, *args):
+        return self._get().fullmatch(string, *args)
+
+    def finditer(self, string, *args):
+        return self._get().finditer(string, *args)
+
+    def findall(self, string, *args):
+        return self._get().findall(string, *args)
+
+    def sub(self, repl, string, *args):
+        return self._get().sub(repl, string, *args)
+
+    def subn(self, repl, string, *args):
+        return self._get().subn(repl, string, *args)
+
+    def split(self, string, *args):
+        return self._get().split(string, *args)
+
+    def __getattr__(self, name: str):
+        return getattr(self._get(), name)
+
+    def __repr__(self) -> str:
+        return f"_LazyPattern({self._source!r})"
+
+
+_rx = _LazyPattern
 
 
 # --------------------------------------------------------------------------- #
@@ -212,50 +279,50 @@ from lib import messages  # noqa: E402
 # --------------------------------------------------------------------------- #
 DONE_PATTERNS = [
     # Chinese — explicit completion
-    re.compile(r"已解决"),
-    re.compile(r"已修复"),
-    re.compile(r"已完成"),
-    re.compile(r"完成了"),
-    re.compile(r"完工"),
-    re.compile(r"搞定"),
+    _rx(r"已解决"),
+    _rx(r"已修复"),
+    _rx(r"已完成"),
+    _rx(r"完成了"),
+    _rx(r"完工"),
+    _rx(r"搞定"),
     # Chinese — natural "fixed it" phrasings (V + 好了 idiom).
     # Caught the test failure where "我把 bug 改好了" was overlooked
     # because we had only 修好了 but not 改好了 / 弄好了 / 搞好了 etc.
-    re.compile(r"[修改弄搞]好了"),
+    _rx(r"[修改弄搞]好了"),
     # English — explicit completion
-    re.compile(r"\bfixed\b", re.IGNORECASE),
-    re.compile(r"\bdone\b", re.IGNORECASE),
-    re.compile(r"\bcompleted\b", re.IGNORECASE),
-    re.compile(r"\bresolved\b", re.IGNORECASE),
+    _rx(r"\bfixed\b", re.IGNORECASE),
+    _rx(r"\bdone\b", re.IGNORECASE),
+    _rx(r"\bcompleted\b", re.IGNORECASE),
+    _rx(r"\bresolved\b", re.IGNORECASE),
     # v0.25.1 — wordings that were missing. This list is not cosmetic:
     # `_has_done_claim` gates EVERY one of the nine layers, so a
     # completion phrased outside it skipped the whole enforcement stack
     # and cleared the edit flag on the way out. `已完成。`,
     # `Implemented the fix`, `Finished the refactor` and `the migration
     # is complete` were all silently exempt.
-    re.compile(r"\bimplemented\b", re.IGNORECASE),
-    re.compile(r"\bfinished\b", re.IGNORECASE),
+    _rx(r"\bimplemented\b", re.IGNORECASE),
+    _rx(r"\bfinished\b", re.IGNORECASE),
     # `is/are complete` rather than bare `complete`, which is far more
     # often an imperative ("complete the migration") than a claim.
-    re.compile(r"\b(?:is|are|was|were)\s+complete\b", re.IGNORECASE),
+    _rx(r"\b(?:is|are|was|were)\s+complete\b", re.IGNORECASE),
     # v0.26.0 audit — the predicative form with the noun in front.
     # `Work complete. Ready to ship.` matched nothing, and a done-claim
     # that matches nothing skips ALL NINE layers and clears the edit flag.
     # Anchored to a small noun set so the imperative ("complete the
     # migration") still does not match.
-    re.compile(
+    _rx(
         r"\b(?:work|task|job|migration|refactor|refactoring|fix|fixes|"
         r"change|changes|update|updates|implementation|build|setup|"
         r"cleanup)\s+complete\b",
         re.IGNORECASE,
     ),
-    re.compile(r"\bready\s+to\s+ship\b", re.IGNORECASE),
+    _rx(r"\bready\s+to\s+ship\b", re.IGNORECASE),
     # English — soft "should be done" phrasings (also red flags)
     # `\ball\s+set\b` — the old unbounded `all set` substring matched
     # inside "Not all settings are loaded".
-    re.compile(r"\ball\s+set\b", re.IGNORECASE),
-    re.compile(r"should\s+work\s+now", re.IGNORECASE),
-    re.compile(r"that\s+should\s+do\s+it", re.IGNORECASE),
+    _rx(r"\ball\s+set\b", re.IGNORECASE),
+    _rx(r"should\s+work\s+now", re.IGNORECASE),
+    _rx(r"that\s+should\s+do\s+it", re.IGNORECASE),
 ]
 
 # Negators that invert a done-claim. `Not done; tests failed.` and
@@ -284,11 +351,11 @@ DONE_PATTERNS = [
 # this time it IS done") put the negator within the gap budget and the
 # genuine completion claim was suppressed. Splitting at 所以 / 但是 / …
 # models the actual sentence structure instead of guessing at distance.
-_CLAUSE_BOUNDARY = re.compile(
+_CLAUSE_BOUNDARY = _rx(
     r"[.!?;。！？；，,\n—–-]"
     r"|所以|因此|因而|于是|於是|但是|但|不过|不過|然而|可是"
 )
-_NEGATION_WORD = re.compile(
+_NEGATION_WORD = _rx(
     r"\bnot\b|\bno\b|\bnone\b|\bnever\b|\bnothing\b|\bwithout\b|\bfail\w*\b"
     r"|\bcannot\b|\bunable\b"
     # Degree-negations that deny completion without a plain negator.
@@ -299,17 +366,17 @@ _NEGATION_WORD = re.compile(
     r"|n['’]t\b|没有|没|尚未|未|不|无法|尚待|還沒|还没|并非|並非|绝非|絕非|非|未能",
     re.IGNORECASE,
 )
-_WORDISH = re.compile(r"[A-Za-z0-9一-鿿]+")
+_WORDISH = _rx(r"[A-Za-z0-9一-鿿]+")
 # How many words may sit between the negator and the claim it negates.
 _MAX_NEGATION_GAP_WORDS = 3
 
 # Double negatives are AFFIRMATIVE: `不得不承认已完成` ("cannot but admit it
 # is done") is a completion claim, not a denial of one.
-_DOUBLE_NEGATIVE = re.compile(r"不得不|不能不|无不|無不|莫不|不无|不會不|不会不")
+_DOUBLE_NEGATIVE = _rx(r"不得不|不能不|无不|無不|莫不|不无|不會不|不会不")
 
 # Constructions where the negator scopes something else entirely, so the
 # claim after it is NOT negated: `not only fixed but tested`.
-_NON_SCOPING_AFTER = re.compile(r"^\s*(?:only|just|merely|simply)\b",
+_NON_SCOPING_AFTER = _rx(r"^\s*(?:only|just|merely|simply)\b",
                                 re.IGNORECASE)
 
 
@@ -347,31 +414,31 @@ def _is_negated(text: str, claim_start: int) -> bool:
 
 EVIDENCE_PATTERNS = [
     # Shell prompts and command-output markers
-    re.compile(r"^\s*\$\s+\S", re.MULTILINE),
-    re.compile(r"^\s*>\s+\S", re.MULTILINE),
+    _rx(r"^\s*\$\s+\S", re.MULTILINE),
+    _rx(r"^\s*>\s+\S", re.MULTILINE),
     # Windows shells (v0.25.1). This plugin's primary platform emits
     # `PS C:\repo>` / `C:\repo>` transcripts, none of which matched the
     # POSIX-only prompt patterns above — so a Windows user pasting a real
     # command transcript could still be blocked by layer (a) for having
     # "no evidence".
-    re.compile(r"^\s*PS\s+[A-Za-z]:[^\n>]*>\s*\S", re.MULTILINE),
-    re.compile(r"^\s*[A-Za-z]:\\[^\n>]*>\s*\S", re.MULTILINE),
+    _rx(r"^\s*PS\s+[A-Za-z]:[^\n>]*>\s*\S", re.MULTILINE),
+    _rx(r"^\s*[A-Za-z]:\\[^\n>]*>\s*\S", re.MULTILINE),
     # Test-runner output snippets
-    re.compile(r"\b\d+\s+(passed|failed|errors?)\b", re.IGNORECASE),
-    re.compile(r"Ran\s+\d+\s+tests?", re.IGNORECASE),
-    re.compile(r"\bpytest\b", re.IGNORECASE),
-    re.compile(r"\bunittest\b", re.IGNORECASE),
+    _rx(r"\b\d+\s+(passed|failed|errors?)\b", re.IGNORECASE),
+    _rx(r"Ran\s+\d+\s+tests?", re.IGNORECASE),
+    _rx(r"\bpytest\b", re.IGNORECASE),
+    _rx(r"\bunittest\b", re.IGNORECASE),
     # Convergence keywords from rule 06 itself
-    re.compile(r"重触发"),
-    re.compile(r"边界用例"),
-    re.compile(r"反向用例"),
-    re.compile(r"收敛"),
+    _rx(r"重触发"),
+    _rx(r"边界用例"),
+    _rx(r"反向用例"),
+    _rx(r"收敛"),
     # Generic verification language
-    re.compile(r"\bverified\b", re.IGNORECASE),
-    re.compile(r"\bre-?ran\b", re.IGNORECASE),
-    re.compile(r"\bvalidated\b", re.IGNORECASE),
+    _rx(r"\bverified\b", re.IGNORECASE),
+    _rx(r"\bre-?ran\b", re.IGNORECASE),
+    _rx(r"\bvalidated\b", re.IGNORECASE),
     # Evidence formatting cues — fenced code blocks of output
-    re.compile(r"```\n[^`]{20,}", re.MULTILINE),
+    _rx(r"```\n[^`]{20,}", re.MULTILINE),
 ]
 
 
@@ -395,9 +462,9 @@ _DONE_INNER = (
 )
 HEDGE_NEAR_DONE_PATTERNS = [
     # Hedge then done (within 50 chars)
-    re.compile(rf"({_HEDGE_INNER}).{{0,50}}?({_DONE_INNER})", re.IGNORECASE),
+    _rx(rf"({_HEDGE_INNER}).{{0,50}}?({_DONE_INNER})", re.IGNORECASE),
     # Done then hedge (within 50 chars)
-    re.compile(rf"({_DONE_INNER}).{{0,50}}?({_HEDGE_INNER})", re.IGNORECASE),
+    _rx(rf"({_DONE_INNER}).{{0,50}}?({_HEDGE_INNER})", re.IGNORECASE),
 ]
 
 
@@ -411,33 +478,33 @@ HEDGE_NEAR_DONE_PATTERNS = [
 #       at least half of the quiz, in their own phrasing).
 # --------------------------------------------------------------------------- #
 CONVERGENCE_MARKERS = [
-    re.compile(r"\brule\s*0?6\b", re.IGNORECASE),
-    re.compile(r"自答"),
-    re.compile(r"收敛"),
-    re.compile(r"\bconvergen", re.IGNORECASE),
-    re.compile(r"\bself[\s-]?quiz", re.IGNORECASE),
+    _rx(r"\brule\s*0?6\b", re.IGNORECASE),
+    _rx(r"自答"),
+    _rx(r"收敛"),
+    _rx(r"\bconvergen", re.IGNORECASE),
+    _rx(r"\bself[\s-]?quiz", re.IGNORECASE),
     # Specific check names from rule 06 — invoking the check by name
     # demonstrates rule-06 awareness.
-    re.compile(r"重触发"),
-    re.compile(r"边界用例"),
-    re.compile(r"反向用例"),
+    _rx(r"重触发"),
+    _rx(r"边界用例"),
+    _rx(r"反向用例"),
 ]
 
 SELF_QUIZ_PATTERNS = [
     # Q1 — really solved?
-    re.compile(r"真.{0,4}?解决|really.{0,4}?(?:solv|fix)", re.IGNORECASE),
+    _rx(r"真.{0,4}?解决|really.{0,4}?(?:solv|fix)", re.IGNORECASE),
     # Q2 — better solution?
-    re.compile(
+    _rx(
         r"更好.{0,4}?(?:方案|方法|做法)|better.{0,4}?(?:solut|approach|way)",
         re.IGNORECASE,
     ),
     # Q3 — unverified parts?
-    re.compile(
+    _rx(
         r"(?:哪些|哪里).{0,6}?(?:没验|未验)|unverif",
         re.IGNORECASE,
     ),
     # Q4 — meaningful verification?
-    re.compile(
+    _rx(
         r"验证.{0,6}?(?:合理|是否充分)|verification.{0,6}?(?:meaning|reasonab)",
         re.IGNORECASE,
     ),
@@ -457,33 +524,33 @@ SELF_QUIZ_PATTERNS = [
 #       answered at least 2/3 of: coverage, standard, fidelity).
 # --------------------------------------------------------------------------- #
 FIDELITY_MARKERS = [
-    re.compile(r"\brule\s*0?7\b", re.IGNORECASE),
-    re.compile(r"任务忠实"),
-    re.compile(r"请求覆盖"),
-    re.compile(r"原始请求"),
-    re.compile(r"无遗漏"),
-    re.compile(r"无降级"),
-    re.compile(r"未降级"),
-    re.compile(r"未遗漏"),
-    re.compile(r"无超范围"),
-    re.compile(r"未超范围"),
-    re.compile(r"\btask\s+fidelity\b", re.IGNORECASE),
-    re.compile(r"\brequest\s+coverage\b", re.IGNORECASE),
-    re.compile(r"\brequest\s+fidelity\b", re.IGNORECASE),
-    re.compile(r"no\s+degrad", re.IGNORECASE),
-    re.compile(r"no\s+omission", re.IGNORECASE),
-    re.compile(r"no\s+scope\s+creep", re.IGNORECASE),
-    re.compile(r"covered\s+all", re.IGNORECASE),
-    re.compile(r"all\s+requested", re.IGNORECASE),
+    _rx(r"\brule\s*0?7\b", re.IGNORECASE),
+    _rx(r"任务忠实"),
+    _rx(r"请求覆盖"),
+    _rx(r"原始请求"),
+    _rx(r"无遗漏"),
+    _rx(r"无降级"),
+    _rx(r"未降级"),
+    _rx(r"未遗漏"),
+    _rx(r"无超范围"),
+    _rx(r"未超范围"),
+    _rx(r"\btask\s+fidelity\b", re.IGNORECASE),
+    _rx(r"\brequest\s+coverage\b", re.IGNORECASE),
+    _rx(r"\brequest\s+fidelity\b", re.IGNORECASE),
+    _rx(r"no\s+degrad", re.IGNORECASE),
+    _rx(r"no\s+omission", re.IGNORECASE),
+    _rx(r"no\s+scope\s+creep", re.IGNORECASE),
+    _rx(r"covered\s+all", re.IGNORECASE),
+    _rx(r"all\s+requested", re.IGNORECASE),
     # Per-item enumeration cue — the user-original-request decomposition
     # form usually surfaces as ✅/⚠️/❌ checklists, which strongly imply
     # the agent went through the rule-07 wrap-up.
-    re.compile(r"[✅⚠️❌].{0,40}?(?:完成|done|完工)", re.IGNORECASE),
+    _rx(r"[✅⚠️❌].{0,40}?(?:完成|done|完工)", re.IGNORECASE),
 ]
 
 FIDELITY_QUIZ_PATTERNS = [
     # Q1 — coverage: did I do every sub-item the user asked for?
-    re.compile(
+    _rx(
         r"(?:用户|原始).{0,8}?(?:请求|要求).{0,16}?(?:拆|列|包含|分成|项|子项)"
         r"|decompos[a-z]{0,4}.{0,12}?request"
         r"|sub-?item"
@@ -491,14 +558,14 @@ FIDELITY_QUIZ_PATTERNS = [
         re.IGNORECASE,
     ),
     # Q2 — standard: did each modifier word land as a hard action?
-    re.compile(
+    _rx(
         r"(?:强制|必须|完整|严格|全面|所有).{0,30}?(?:落实|硬动作|硬证据|拦截|断言|实现|生效)"
         r"|(?:mandator|strict|comprehensive|all|every|hard).{0,30}?"
         r"(?:enforced|verifi|hook|assert|land)",
         re.IGNORECASE,
     ),
     # Q3 — fidelity: any concept-swap, scope creep, or buried TODO?
-    re.compile(
+    _rx(
         r"偷换|降级|超范围|额外的?(?:改|修)|遗漏|裁剪"
         r"|concept.?swap|degrad|scope.?creep|omission|trim|drive-?by",
         re.IGNORECASE,
@@ -584,12 +651,12 @@ def _has_fidelity_marker_or_quiz(text: str) -> bool:
 # analysis-only / answer-only turns are never blocked by (e).
 # --------------------------------------------------------------------------- #
 RULE_08_MARKERS = [
-    re.compile(r"\brule\s*0?8\b", re.IGNORECASE),
-    re.compile(r"改前必读"),
-    re.compile(r"写前必想"),
-    re.compile(r"read[\s-]before[\s-]edit", re.IGNORECASE),
-    re.compile(r"think[\s-]before[\s-]write", re.IGNORECASE),
-    re.compile(r"系统式自答"),
+    _rx(r"\brule\s*0?8\b", re.IGNORECASE),
+    _rx(r"改前必读"),
+    _rx(r"写前必想"),
+    _rx(r"read[\s-]before[\s-]edit", re.IGNORECASE),
+    _rx(r"think[\s-]before[\s-]write", re.IGNORECASE),
+    _rx(r"系统式自答"),
 ]
 
 # Six rule-02 systematic-thinking keywords. We accept ≥ 3 of these as a
@@ -599,16 +666,16 @@ RULE_08_MARKERS = [
 # same idea twice in two languages still counts as one).
 RULE_02_KEYWORDS = [
     # Q1 / Q2 — architecture + responsibility
-    re.compile(r"架构|architecture|architectural", re.IGNORECASE),
-    re.compile(r"职责|responsibilit", re.IGNORECASE),
+    _rx(r"架构|architecture|architectural", re.IGNORECASE),
+    _rx(r"职责|responsibilit", re.IGNORECASE),
     # Q3 — root cause
-    re.compile(r"根源|根因|root[\s-]?cause", re.IGNORECASE),
+    _rx(r"根源|根因|root[\s-]?cause", re.IGNORECASE),
     # Q4 — solution / bottom-out
-    re.compile(r"方案|solution|approach", re.IGNORECASE),
+    _rx(r"方案|solution|approach", re.IGNORECASE),
     # Q5 — connected impact
-    re.compile(r"连带|下游|影响范围|downstream|impact|connected", re.IGNORECASE),
+    _rx(r"连带|下游|影响范围|downstream|impact|connected", re.IGNORECASE),
     # Q6 — risk / invariants
-    re.compile(r"风险|不变量|invariant|risk", re.IGNORECASE),
+    _rx(r"风险|不变量|invariant|risk", re.IGNORECASE),
 ]
 
 
@@ -634,24 +701,24 @@ def _has_rule08_marker_or_keywords(text: str) -> bool:
 # Layer (f) only fires when the agent actually edited a file this turn.
 # --------------------------------------------------------------------------- #
 RULE_09_MARKERS = [
-    re.compile(r"\brule\s*0?9\b", re.IGNORECASE),
-    re.compile(r"系统式修改"),
-    re.compile(r"打补丁"),
-    re.compile(r"patch[\s-]?style", re.IGNORECASE),
-    re.compile(r"systematic[\s-]?modification", re.IGNORECASE),
-    re.compile(r"non[\s-]?patch", re.IGNORECASE),
-    re.compile(r"反补丁"),
+    _rx(r"\brule\s*0?9\b", re.IGNORECASE),
+    _rx(r"系统式修改"),
+    _rx(r"打补丁"),
+    _rx(r"patch[\s-]?style", re.IGNORECASE),
+    _rx(r"systematic[\s-]?modification", re.IGNORECASE),
+    _rx(r"non[\s-]?patch", re.IGNORECASE),
+    _rx(r"反补丁"),
 ]
 
 # The three rule-09 "triplet" keywords. All three must be present for
 # the keyword fallback to count as satisfying the gate.
 RULE_09_TRIPLET = (
     # Root cause
-    re.compile(r"根源|根因|root[\s-]?cause", re.IGNORECASE),
+    _rx(r"根源|根因|root[\s-]?cause", re.IGNORECASE),
     # Impact / blast radius
-    re.compile(r"连带|影响范围|impact|blast[\s-]?radius|downstream", re.IGNORECASE),
+    _rx(r"连带|影响范围|impact|blast[\s-]?radius|downstream", re.IGNORECASE),
     # Solution / alternatives considered
-    re.compile(r"方案|solution|approach|alternative", re.IGNORECASE),
+    _rx(r"方案|solution|approach|alternative", re.IGNORECASE),
 )
 
 
@@ -683,12 +750,12 @@ def _has_rule09_marker_or_triplet(text: str) -> bool:
 # 00-index + docs fan-out that a real rule would require.
 # --------------------------------------------------------------------------- #
 TLDR_MARKERS = [
-    re.compile(r"\btl;?dr\b", re.IGNORECASE),
-    re.compile(r"大白话"),
-    re.compile(r"一句话(?:总结|讲|说清|概括)"),
-    re.compile(r"一句总结"),
+    _rx(r"\btl;?dr\b", re.IGNORECASE),
+    _rx(r"大白话"),
+    _rx(r"一句话(?:总结|讲|说清|概括)"),
+    _rx(r"一句总结"),
     # The canonical YAML schema field key.
-    re.compile(r"\btldr\s*[:：]"),
+    _rx(r"\btldr\s*[:：]"),
 ]
 
 
@@ -821,7 +888,7 @@ def _display_width(text: str) -> int:
     return width
 
 
-_TLDR_ITEM_LINE = re.compile(
+_TLDR_ITEM_LINE = _rx(
     r"^(?P<prefix>[ \t]*(?:(?:[*+-]|#{1,6})[ \t]+)?)"
     r"[*_`]{0,3}(?:tldr|大白话|一句话总结|一句总结|TL;?DR)[*_`]{0,3}"
     r"[ \t]*[:：](?P<rest>.*)$",
@@ -830,7 +897,7 @@ _TLDR_ITEM_LINE = re.compile(
 
 # Colon-less heading form: `## TL;DR` alone on a line; the following
 # paragraph is the tldr content.
-_TLDR_HEADING_LINE = re.compile(
+_TLDR_HEADING_LINE = _rx(
     r"^[ \t]*#{1,6}[ \t]+[*_`]{0,3}(?:tldr|大白话|一句话总结|一句总结|TL;?DR)"
     r"[*_`]{0,3}[ \t]*$",
     re.IGNORECASE,
@@ -992,12 +1059,12 @@ def _find_overlong_tldr(text: str) -> tuple[str, int] | None:
 # file's NAME, so any reply merely mentioning `sync-gate.toml` would
 # pass the gate without making any claim. Markers must be claim-shaped.
 SYNC_MARKERS = [
-    re.compile(r"\brule\s*12\b", re.IGNORECASE),
-    re.compile(r"全库同步"),
-    re.compile(r"同步核对"),
-    re.compile(r"连带核对"),
-    re.compile(r"repo[\s-]?wide\s+sync", re.IGNORECASE),
-    re.compile(r"sync[\s-]?check", re.IGNORECASE),
+    _rx(r"\brule\s*12\b", re.IGNORECASE),
+    _rx(r"全库同步"),
+    _rx(r"同步核对"),
+    _rx(r"连带核对"),
+    _rx(r"repo[\s-]?wide\s+sync", re.IGNORECASE),
+    _rx(r"sync[\s-]?check", re.IGNORECASE),
 ]
 
 
@@ -1076,6 +1143,18 @@ def _has_sync_marker(text: str) -> bool:
     return False
 
 
+def _sync_gate():
+    """`lib.sync_gate`, imported on first use.
+
+    Only layer (i) and the grace-path acknowledgement evaluate the sync
+    gate, and both run on edit turns that carry a done-claim. Every other
+    Stop — the majority — used to import the module (and the TOML parser
+    behind it) at start-up for nothing.
+    """
+    from lib import sync_gate  # because the import is deferred on purpose; see above
+    return sync_gate
+
+
 def _pending_sync_violations(
     session_id: str, cwd: str | None,
 ) -> list:
@@ -1085,7 +1164,7 @@ def _pending_sync_violations(
     "which violated groups has the agent NOT answered yet", filtered
     against the session's `sync_acked_groups`.
     """
-    violations = sync_gate_lib.evaluate(
+    violations = _sync_gate().evaluate(
         state_lib.get_edited_files(session_id), cwd,
     )
     if not violations:
@@ -1171,7 +1250,7 @@ _PATH_TOKEN = r"(?:[A-Za-z]:)?[\w./\\~-]+\.[A-Za-z][A-Za-z0-9_]{0,15}"
 # English claim verbs. Restricted to verbs that unambiguously assert
 # the agent did the action: created / wrote / edited / modified. "updated"
 # / "changed" are too loose ("updated the issue tracker" = social action).
-_FILE_CLAIMS_EN = re.compile(
+_FILE_CLAIMS_EN = _rx(
     # Optional "I", then a verb, then optional "the"/"a"/"to", then path.
     # Verb captured so the verifier can distinguish edit-vs-create logic.
     r"\bI\s+(edited|modified|wrote(?:\s+to)?|created|added\s+to)\s+"
@@ -1208,7 +1287,7 @@ _FILE_CLAIMS_EN = re.compile(
 # pattern was created to stop, one layer in. The gap must therefore not
 # contain a version / release / PR token, which is what such an
 # intervening subject looks like in this repo's prose.
-_FILE_CLAIMS_ZH = re.compile(
+_FILE_CLAIMS_ZH = _rx(
     r"(?:我|本次|这次|此次)(?![^。；;\n]{0,12}?"
     r"(?:v\d|V\d|#\d|上一版|上个版本|上個版本|旧版|舊版|前一版))"
     r"[^。；;\n]{0,12}?"
@@ -1223,7 +1302,7 @@ _FILE_CLAIMS_ZH = re.compile(
 # "我没有修改了 lib/state.py" still yielded a positive claim. The CJK
 # negators now allow zero intervening spaces; the ASCII branch keeps its
 # mandatory whitespace so "cannot" / "note" cannot be read as "not".
-_NEGATED_BEFORE = re.compile(
+_NEGATED_BEFORE = _rx(
     r"(?:(?:not?|n't)\s+\S{0,12}|(?:没有|没|未|不|沒|无|無)\s*\S{0,12})\Z",
     re.IGNORECASE,
 )
@@ -1233,7 +1312,7 @@ _NEGATED_BEFORE = re.compile(
 # negator sits INSIDE the match ("我" + "没有" + "修改了 X"), i.e. after
 # the match start rather than before it. `_extract_file_claims` therefore
 # also scans the subject→verb gap with this pattern.
-_NEGATION_INNER = re.compile(r"没有|没|尚未|未|不|沒|无|無")
+_NEGATION_INNER = _rx(r"没有|没|尚未|未|不|沒|无|無")
 
 
 def _extract_file_claims(message: str) -> list[tuple[str, str, str]]:
@@ -1572,23 +1651,32 @@ def _emit_block(reason_text: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Transcript fallback.
+# Where the reply text comes from.
 #
-# The Stop payload normally includes `assistant_message`. If a future
-# version of Claude Code drops that field (or if our payload-shape
-# assumption is wrong), we fall back to reading the last assistant
-# entry from `transcript_path` (a JSONL file), reading only its tail.
+# Claude Code's Stop payload carries the turn's final assistant text as
+# `last_assistant_message` (documented in the hooks reference; optional).
+# Until v0.40 this hook read `assistant_message` — a field the harness
+# has never sent — so in production every Stop fell through to the
+# transcript, which is why the v0.39.2 field failure below was a
+# per-turn cost rather than a rare one. Both spellings are honoured (the
+# test harness and older payloads use the short one); the transcript
+# stays as the fallback for a payload that carries neither.
 # --------------------------------------------------------------------------- #
-# v0.39.2 (2026-09-15) -- read the TAIL, never the whole file. A 2.5 GB
-# session transcript read whole (`read_text` + `splitlines`) turned every
-# Stop into a 12.7 GB process for six seconds (machine available RAM
-# 19.9 GB -> 1.7 GB) and the OS paged out the user's other services. The
-# last text-bearing assistant entry sits at the end, so the reader walks
-# backwards in growing byte windows cut to whole lines and stops at the
-# first hit; a line longer than the window simply grows it (bounded by
-# TRANSCRIPT_TAIL_LIMIT). Peak memory is a few windows, whatever the file.
-TRANSCRIPT_TAIL_WINDOW = 4 * 1024 * 1024
+# v0.39.2 (2026-09-15) -- the fallback reads the TAIL, never the whole
+# file. A 2.5 GB session transcript read whole (`read_text` +
+# `splitlines`) turned every Stop into a 12.7 GB process for six seconds
+# (machine available RAM 19.9 GB -> 1.7 GB) and the OS paged out the
+# user's other services. The last text-bearing assistant entry sits at
+# the end, so the reader walks backwards in growing byte windows cut to
+# whole lines and stops at the first hit; a line longer than the window
+# simply grows it (bounded by TRANSCRIPT_TAIL_LIMIT). Peak memory is a
+# few windows, whatever the file. v0.40 starts at 256 KiB rather than
+# 4 MiB and grows by 16x: a final reply is a few KB, and the first
+# window is read, split and scanned whole on every fallback.
+TRANSCRIPT_TAIL_WINDOW = 256 * 1024
+TRANSCRIPT_TAIL_GROWTH = 16
 TRANSCRIPT_TAIL_LIMIT = 64 * 1024 * 1024
+_MESSAGE_FIELDS = ("last_assistant_message", "assistant_message")
 
 
 def _entry_text(entry: dict) -> str:
@@ -1648,7 +1736,7 @@ def _last_assistant_message_from_transcript(transcript_path: str) -> str:
                         return extracted
                 if start == 0 or window >= TRANSCRIPT_TAIL_LIMIT:
                     return ""
-                window = min(window * 4, TRANSCRIPT_TAIL_LIMIT)
+                window = min(window * TRANSCRIPT_TAIL_GROWTH, TRANSCRIPT_TAIL_LIMIT)
     except OSError:
         return ""
 
@@ -1692,7 +1780,12 @@ def main() -> int:
         # to drop that acknowledgement on the floor (the group then
         # re-blocked after the grace window despite having been
         # explicitly answered).
-        message = payload.get("assistant_message") or ""
+        message = ""
+        for field in _MESSAGE_FIELDS:
+            value = payload.get(field)
+            if isinstance(value, str) and value:
+                message = value
+                break
         if not message and payload.get("transcript_path"):
             message = _last_assistant_message_from_transcript(
                 payload["transcript_path"]
@@ -1978,6 +2071,7 @@ def main() -> int:
     except Exception:
         # Failing open: log to stderr but never block by accident.
         sys.stderr.write("[cc-enforcer] stop_guard exception:\n")
+        import traceback  # because only this failing-open path formats one
         sys.stderr.write(traceback.format_exc())
     return 0
 

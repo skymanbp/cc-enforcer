@@ -68,7 +68,7 @@ from lib import state as state_lib  # noqa: E402
 # Filenames in state_dir that are NOT per-session state files. These
 # must never be GC'd no matter how old. Keep this list narrow.
 _GC_INTERNAL_FILES = {
-    "_auto_gc.json",  # auto-GC rate-limit marker (v0.18)
+    state_lib.AUTO_GC_MARKER,  # auto-GC rate-limit marker (v0.18)
 }
 
 

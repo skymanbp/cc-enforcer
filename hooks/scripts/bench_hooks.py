@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""cc-enforcer — measure what the guards cost per tool call.
+"""cc-enforcer — measure what the hooks cost per event.
 
 Every hook here is a separate OS process that Claude Code spawns and
 waits for, so the plugin's latency sits directly in the critical path of
-the agent's Read / Edit / Write / Bash / Stop. That makes "how slow is
-it?" a real question about the product, and one the README should not
-answer from memory.
+the agent's prompts and tool calls. That makes "how slow is it?" a real
+question about the product, and one the README should not answer from
+memory.
 
 What it reports and why the baseline row matters
 ------------------------------------------------
@@ -16,6 +16,27 @@ interpreter starting up, not any detector running — so a bare
 Without that row a reader would attribute the whole figure to the
 guards, and the interesting number (what cc-enforcer itself adds) would
 be invisible.
+
+What each scenario exercises
+----------------------------
+* ``SessionStart`` / ``UserPromptSubmit`` — the two injections. The
+  second runs on every prompt, which makes it the most frequent hook in
+  the plugin; it was missing from this table until v0.40.
+* ``PreToolUse(Read)`` — a repeat Read of an already-recorded file.
+* ``PreToolUse(Edit)`` — an ALLOWED systematic edit: the content
+  detectors, the on-disk scale measurement and every state write. Until
+  v0.40 the Edit row measured a small edit against one session, so the
+  warm-ups pushed the rolling-patch counter to its threshold and every
+  measured run was the DENY path — the shortest one, not the common one.
+* ``PreToolUse(Bash)`` — a clean command through every deny check.
+* ``Stop (9 layers)`` — a done-claim reply on an edit turn (the Edit
+  above landed in the same session), so all nine layers are evaluated
+  and all nine pass. Until v0.40 the warm-up Edits were denied, the Stop
+  was a non-edit turn, and layers (e)/(f)/(g)/(i) never ran.
+
+Every run is checked: a hook that exits non-zero, or produces output
+where none is expected, aborts the benchmark. Without that a crashing
+hook would look like a speed-up.
 
 Numbers are machine-specific by nature; nothing in CI pins them. This
 script is the reproduction the README cites, so a reader can get their
@@ -61,22 +82,37 @@ def _percentile(values: list[float], pct: float) -> float:
     return ordered[rank - 1]
 
 
-def _time_one(argv: list[str], payload: str | None, env: dict) -> float:
+def _time_one(argv: list[str], payload: str | None, env: dict,
+              expect_stdout: bool | None, label: str) -> float:
     start = time.perf_counter()
-    subprocess.run(
+    proc = subprocess.run(
         argv,
         input=payload.encode("utf-8") if payload is not None else b"",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
     )
-    return (time.perf_counter() - start) * 1000.0
+    elapsed = (time.perf_counter() - start) * 1000.0
+    if proc.returncode != 0:
+        raise SystemExit(
+            f"{label}: exit status {proc.returncode} -- a failing hook is not "
+            f"a fast one\n{proc.stderr.decode('utf-8', 'replace')[-800:]}"
+        )
+    if expect_stdout is not None and bool(proc.stdout.strip()) != expect_stdout:
+        raise SystemExit(
+            f"{label}: {'no output' if expect_stdout else 'unexpected output'} "
+            f"-- the scenario is not exercising the path it names\n"
+            f"{proc.stdout.decode('utf-8', 'replace')[:400]}"
+        )
+    return elapsed
 
 
-def _measure(argv: list[str], payload: str | None, env: dict, runs: int) -> dict:
+def _measure(argv: list[str], payload: str | None, env: dict, runs: int,
+             expect_stdout: bool | None, label: str) -> dict:
     for _ in range(WARMUP_RUNS):
-        _time_one(argv, payload, env)
-    samples = [_time_one(argv, payload, env) for _ in range(runs)]
+        _time_one(argv, payload, env, expect_stdout, label)
+    samples = [_time_one(argv, payload, env, expect_stdout, label)
+               for _ in range(runs)]
     return {
         "p50_ms": round(statistics.median(samples), 1),
         "p95_ms": round(_percentile(samples, 95), 1),
@@ -96,34 +132,62 @@ def _dumps(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _scenarios(target: str, session: str) -> list[tuple[str, str | None, str]]:
-    """(label, hook script or None for the baseline, stdin payload)."""
+def _scenarios(target: str, session: str) -> list[dict]:
+    """One dict per scenario: label, script (None = baseline), args, payload,
+    and whether stdout is expected (None = not checked)."""
+    # The Edit scenario before it is ALLOWED, so this Stop is an edit turn
+    # and layers (e)/(f)/(g)/(i) are live: the reply carries the rule-08
+    # and rule-09 markers those layers look for, so every layer is
+    # evaluated and every layer passes.
     done = (
         "已修复并验证。\n$ python -m unittest → Ran 617 tests, OK\n"
         "重触发原症状: 已通过。\nrule 07: 无降级、无遗漏。\n"
-        "根因/影响/方案均已说明。\ntldr: 修好了，测试全绿。"
+        "rule 08: 改前必读、写前必想 —— 根因 / 架构 / 方案 / 影响范围 / 风险均已说明。\n"
+        "rule 09: 系统式修改，根因 + 影响范围 + 方案三件套齐全。\n"
+        "tldr: 修好了，测试全绿。"
     )
+    # A systematic edit (>= 50 lines) resets the rolling-patch counter on
+    # every run, so each measured Edit is ALLOWED and walks the full path.
+    old_block = "".join(f"# line {i:03d}\n" for i in range(100, 160))
+    new_block = "".join(f"# line {i:03d} revised\n" for i in range(100, 160))
     return [
-        ("PreToolUse(Read)", "read_guard.py", _dumps({
-            "session_id": session, "hook_event_name": "PreToolUse",
-            "tool_name": "Read", "tool_input": {"file_path": target},
-        })),
-        ("PreToolUse(Edit)", "read_guard.py", _dumps({
-            "session_id": session, "hook_event_name": "PreToolUse",
-            "tool_name": "Edit", "tool_input": {
-                "file_path": target,
-                "old_string": "# line 005\n", "new_string": "# line 005b\n",
-            },
-        })),
-        ("PreToolUse(Bash)", "bash_guard.py", _dumps({
-            "session_id": session, "hook_event_name": "PreToolUse",
-            "tool_name": "Bash", "tool_input": {"command": "git status --short"},
-        })),
-        ("Stop (9 layers)", "stop_guard.py", _dumps({
-            "session_id": session, "hook_event_name": "Stop",
-            "assistant_message": done,
-        })),
-        ("baseline: python -c pass", None, ""),
+        {"label": "SessionStart", "script": "inject_context.py",
+         "args": ["--event", "SessionStart"], "expect_stdout": True,
+         "payload": _dumps({"session_id": session,
+                            "hook_event_name": "SessionStart"})},
+        {"label": "UserPromptSubmit", "script": "inject_context.py",
+         "args": ["--event", "UserPromptSubmit"], "expect_stdout": True,
+         "payload": _dumps({"session_id": session,
+                            "hook_event_name": "UserPromptSubmit"})},
+        {"label": "PreToolUse(Read)", "script": "read_guard.py", "args": [],
+         "expect_stdout": False,
+         "payload": _dumps({
+             "session_id": session, "hook_event_name": "PreToolUse",
+             "tool_name": "Read", "tool_input": {"file_path": target},
+         })},
+        {"label": "PreToolUse(Edit)", "script": "read_guard.py", "args": [],
+         "expect_stdout": False,
+         "payload": _dumps({
+             "session_id": session, "hook_event_name": "PreToolUse",
+             "tool_name": "Edit", "tool_input": {
+                 "file_path": target,
+                 "old_string": old_block, "new_string": new_block,
+             },
+         })},
+        {"label": "PreToolUse(Bash)", "script": "bash_guard.py", "args": [],
+         "expect_stdout": False,
+         "payload": _dumps({
+             "session_id": session, "hook_event_name": "PreToolUse",
+             "tool_name": "Bash", "tool_input": {"command": "git status --short"},
+         })},
+        {"label": "Stop (9 layers)", "script": "stop_guard.py", "args": [],
+         "expect_stdout": False,
+         "payload": _dumps({
+             "session_id": session, "hook_event_name": "Stop",
+             "last_assistant_message": done,
+         })},
+        {"label": "baseline: python -c pass", "script": None, "args": [],
+         "expect_stdout": None, "payload": ""},
     ]
 
 
@@ -138,6 +202,10 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="ccenf-bench-") as tmp:
         env = dict(os.environ)
         env["CLAUDE_PLUGIN_DATA"] = tmp
+        # An empty project root: no edicts, no sync-gate, so every row is
+        # the plugin's own floor rather than this checkout's config.
+        env["CLAUDE_PROJECT_DIR"] = tmp
+        env.pop("CC_ENFORCER_AUTO_GC_DAYS", None)
         # A 300-line target: big enough that the v0.35 scale measurement
         # actually reads a file, which is the cost this benchmark exists
         # to keep honest about.
@@ -146,15 +214,16 @@ def main() -> int:
             fh.write("".join(f"# line {i:03d}\n" for i in range(300)))
 
         results = []
-        for label, script, payload in _scenarios(target, "bench-session"):
-            if script is None:
+        for sc in _scenarios(target, "bench-session"):
+            if sc["script"] is None:
                 argv = [sys.executable, "-c", "pass"]
                 stdin = None
             else:
-                argv = [sys.executable, str(SCRIPTS / script)]
-                stdin = payload
-            stats = _measure(argv, stdin, env, args.runs)
-            results.append({"scenario": label, **stats})
+                argv = [sys.executable, str(SCRIPTS / sc["script"]), *sc["args"]]
+                stdin = sc["payload"]
+            stats = _measure(argv, stdin, env, args.runs,
+                             sc["expect_stdout"], sc["label"])
+            results.append({"scenario": sc["label"], **stats})
 
     if args.json:
         print(json.dumps(results, indent=2))

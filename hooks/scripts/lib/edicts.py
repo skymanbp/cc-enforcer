@@ -8,7 +8,7 @@ commands.
 
 Why TOML and not YAML:
   Python stdlib ships `tomllib` (3.11+) but no YAML parser. cc-enforcer
-  has a strict no-third-party-deps contract (see README + CLAUDE.md), and
+  has a strict no-third-party-deps contract (README, Contributing), and
   rolling a custom YAML subset is fragile. TOML's array-of-tables shape
   is verbose but unambiguous, which suits a config file users hand-edit.
 
@@ -45,40 +45,64 @@ from __future__ import annotations
 import os
 import re
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
 
-try:
-    # because the ignore is unused on 3.11+ where tomllib resolves
-    import tomllib  # type: ignore[unused-ignore]
-except ModuleNotFoundError:
-    # because Python < 3.11 has no tomllib and edicts must fail open
-    tomllib = None  # type: ignore[assignment]
-
+from . import lang as lang_lib
 from . import projroot, tomlio
 
-_PLUGIN_NAME = "cc-enforcer"
+_PLUGIN_NAME = projroot.PLUGIN_NAME
 _EDICTS_FILENAME = "edicts.toml"
 _VALID_SEVERITIES = {"must", "should"}
 
 
-@dataclass(frozen=True)
 class Edict:
     """One parsed edict with its compiled regex patterns.
 
     Compiled patterns live alongside the source-string `deny_*` lists so
     diagnostics can name which pattern matched without recompiling.
+
+    A plain `__slots__` class rather than a frozen dataclass (v0.40):
+    `dataclasses` drags `inspect`, `ast`, `dis` and `tokenize` into every
+    hook process for ~10 ms, and this module is imported by three of the
+    four hooks on every invocation. The class keeps the dataclass surface
+    the callers and tests use — keyword construction with defaults,
+    equality, a readable repr — and nothing else.
     """
-    id: str
-    text: str
-    severity: str  # "must" | "should"
-    note: str = ""
-    deny_edit: tuple[str, ...] = ()
-    deny_bash: tuple[str, ...] = ()
-    # Compiled regex pairs: (source, compiled). A source whose compile
-    # failed is dropped here (and a diagnostic is logged).
-    _compiled_edit: tuple[tuple[str, re.Pattern[str]], ...] = field(default=())
-    _compiled_bash: tuple[tuple[str, re.Pattern[str]], ...] = field(default=())
+
+    __slots__ = ("id", "text", "severity", "note", "deny_edit", "deny_bash",
+                 "_compiled_edit", "_compiled_bash")
+
+    def __init__(
+        self, *, id: str, text: str, severity: str, note: str = "",
+        deny_edit: tuple[str, ...] = (), deny_bash: tuple[str, ...] = (),
+        _compiled_edit: tuple[tuple[str, re.Pattern[str]], ...] = (),
+        _compiled_bash: tuple[tuple[str, re.Pattern[str]], ...] = (),
+    ) -> None:
+        self.id = id
+        self.text = text
+        self.severity = severity  # "must" | "should"
+        self.note = note
+        self.deny_edit = deny_edit
+        self.deny_bash = deny_bash
+        # Compiled regex pairs: (source, compiled). A source whose compile
+        # failed is dropped here (and a diagnostic is logged).
+        self._compiled_edit = _compiled_edit
+        self._compiled_bash = _compiled_bash
+
+    def _key(self) -> tuple:
+        return (self.id, self.text, self.severity, self.note,
+                self.deny_edit, self.deny_bash)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Edict) and self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash(self._key())
+
+    def __repr__(self) -> str:
+        return (f"Edict(id={self.id!r}, text={self.text!r}, "
+                f"severity={self.severity!r}, note={self.note!r}, "
+                f"deny_edit={self.deny_edit!r}, deny_bash={self.deny_bash!r})")
 
     @property
     def is_hard(self) -> bool:
@@ -118,10 +142,10 @@ def edicts_path() -> Path | None:
     candidates: list[Path] = []
     proj = os.environ.get("CLAUDE_PROJECT_DIR")
     if proj:
-        candidates.append(Path(proj) / ".claude" / _PLUGIN_NAME / _EDICTS_FILENAME)
+        candidates.append(projroot.config_file(Path(proj), _EDICTS_FILENAME))
     cwd_root = _cwd_if_project_root()
     if cwd_root is not None:
-        cwd_candidate = cwd_root / ".claude" / _PLUGIN_NAME / _EDICTS_FILENAME
+        cwd_candidate = projroot.config_file(cwd_root, _EDICTS_FILENAME)
         # Avoid duplicating step 1 if env var already pointed at cwd.
         if not candidates or candidates[0] != cwd_candidate:
             candidates.append(cwd_candidate)
@@ -142,7 +166,7 @@ def global_path() -> Path:
     `--global` WRITING to the old directory while this loader READS the new
     one — silently, both sides being failing-open.
     """
-    return Path.home() / ".claude" / _PLUGIN_NAME / _EDICTS_FILENAME
+    return projroot.config_file(Path.home(), _EDICTS_FILENAME)
 
 
 def default_project_path() -> Path | None:
@@ -160,10 +184,10 @@ def default_project_path() -> Path | None:
     """
     proj = os.environ.get("CLAUDE_PROJECT_DIR")
     if proj:
-        return Path(proj) / ".claude" / _PLUGIN_NAME / _EDICTS_FILENAME
+        return projroot.config_file(Path(proj), _EDICTS_FILENAME)
     cwd_root = _cwd_if_project_root()
     if cwd_root is not None:
-        return cwd_root / ".claude" / _PLUGIN_NAME / _EDICTS_FILENAME
+        return projroot.config_file(cwd_root, _EDICTS_FILENAME)
     return None
 
 
@@ -266,10 +290,13 @@ def load() -> list[Edict]:
     list returned, so the surrounding hooks fall through to their usual
     behaviour.
     """
-    if tomllib is None:
-        return []
     p = edicts_path()
     if p is None:
+        return []
+    # Asked only once a file exists: `available()` is what imports the
+    # parser, and a project with no edicts.toml — the common case — must
+    # not pay for it on every hook invocation (v0.40).
+    if not tomlio.available():
         return []
     # Hardened shared reader: strips a UTF-8 BOM and reports a non-UTF-8
     # file instead of letting UnicodeDecodeError escape this function —
@@ -312,21 +339,13 @@ def load() -> list[Edict]:
 # to English via `.get(lang, ...["en"])` — the edict *text* itself is
 # free-form user content in whatever language the user wrote it.
 # --------------------------------------------------------------------------- #
-DEFAULT_LANG = "en"
+DEFAULT_LANG = lang_lib.DEFAULT
 
-
-def _resolved_lang(explicit: str | None = None) -> str:
-    """Pick the active language code. Explicit param wins; else env; else en.
-
-    No membership gate — any non-empty code passes through (lower-cased).
-    Callers index the chrome dicts with `.get(lang, ...["en"])`, so an
-    unregistered code degrades to English chrome, never a crash.
-    """
-    if explicit is not None:
-        lang = explicit.strip().lower()
-    else:
-        lang = (os.environ.get("CC_ENFORCER_LANG") or "").strip().lower()
-    return lang or DEFAULT_LANG
+# One definition of "the active language" for the whole plugin
+# (`lib/lang.py`, v0.40); this name is kept for the module's own call sites.
+# Callers index the chrome dicts with `.get(lang, ...["en"])`, so an
+# unregistered code degrades to English chrome, never a crash.
+_resolved_lang = lang_lib.resolve
 
 
 # Injection-block chrome strings keyed by language. English first =
@@ -432,12 +451,25 @@ def render_injection(
 # Hard-layer scanning. Used by read_guard (Edit / Write content) and
 # bash_guard (Bash command).
 # --------------------------------------------------------------------------- #
-@dataclass(frozen=True)
 class EdictHit:
     """One matching edict + the specific regex that matched."""
-    edict: Edict
-    pattern_source: str
-    snippet: str  # short, for the deny reason
+
+    __slots__ = ("edict", "pattern_source", "snippet")
+
+    def __init__(self, *, edict: Edict, pattern_source: str, snippet: str) -> None:
+        self.edict = edict
+        self.pattern_source = pattern_source
+        self.snippet = snippet  # short, for the deny reason
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, EdictHit)
+                and (self.edict, self.pattern_source, self.snippet)
+                == (other.edict, other.pattern_source, other.snippet))
+
+    def __repr__(self) -> str:
+        return (f"EdictHit(edict={self.edict!r}, "
+                f"pattern_source={self.pattern_source!r}, "
+                f"snippet={self.snippet!r})")
 
 
 def _line_window(text: str, span_start: int, span_end: int) -> str:

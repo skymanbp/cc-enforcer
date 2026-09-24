@@ -1863,6 +1863,68 @@ class TestEmptyPayload(_StopBase):
         self.assertIsNone(out, msg="empty message must not block")
 
 
+class TestPayloadMessageField(_StopBase):
+    """The reply text comes from `last_assistant_message` when the payload has it.
+
+    That is the field Claude Code's Stop payload documents. Until v0.40
+    the hook read `assistant_message` — a name the harness never sends —
+    so production fell through to the transcript on every Stop, and the
+    2.5 GB transcript of v0.39.2 was a per-turn cost rather than a rare
+    one. The test harness's own `assistant_message` still works; the
+    transcript remains the fallback when neither field is present.
+    """
+
+    def _payload(self, **fields) -> dict:
+        payload = {"session_id": self.sid, "hook_event_name": "Stop",
+                   "cwd": str(self.tmpdir), "turn_count": 5}
+        payload.update(fields)
+        return payload
+
+    def test_last_assistant_message_is_read_before_the_transcript(self) -> None:
+        # The transcript's last assistant entry carries NO done-claim, so a
+        # block can only come from the payload field being read.
+        tpath = self.tmpdir / "transcript.jsonl"
+        tpath.write_text(json.dumps({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "还在看，没结论。"}]},
+        }) + "\n", encoding="utf-8")
+        rc, out, err = run_hook(
+            [GUARD],
+            self._payload(last_assistant_message="已修复，可以 ship。",
+                          transcript_path=str(tpath)),
+            env_overrides=self.env,
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertIsNotNone(out, "the documented payload field was not read")
+        self.assertEqual(out["decision"], "block")
+
+    def test_the_field_is_enough_without_any_transcript(self) -> None:
+        rc, out, _ = run_hook(
+            [GUARD],
+            self._payload(last_assistant_message="Fixed. Should be fine now.",
+                          transcript_path=str(self.tmpdir / "absent.jsonl")),
+            env_overrides=self.env,
+        )
+        self.assertEqual(rc, 0)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["decision"], "block")
+
+    def test_a_blank_field_still_falls_back_to_the_transcript(self) -> None:
+        tpath = self.tmpdir / "transcript.jsonl"
+        tpath.write_text(json.dumps({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "已解决。"}]},
+        }) + "\n", encoding="utf-8")
+        rc, out, _ = run_hook(
+            [GUARD],
+            self._payload(last_assistant_message="", transcript_path=str(tpath)),
+            env_overrides=self.env,
+        )
+        self.assertEqual(rc, 0)
+        self.assertIsNotNone(out, "an empty field must not mask the transcript")
+        self.assertEqual(out["decision"], "block")
+
+
 class TestTranscriptFallback(_StopBase):
     """Claude Code's actual Stop hook payload usually omits
     `assistant_message` and only ships `transcript_path`. The fallback

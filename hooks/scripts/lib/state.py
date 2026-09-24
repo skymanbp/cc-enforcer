@@ -33,7 +33,14 @@ if os.name == "nt":
 else:
     import fcntl
 
-_PLUGIN_NAME = "cc-enforcer"
+from . import projroot
+
+_PLUGIN_NAME = projroot.PLUGIN_NAME
+
+# The auto-GC rate-limit marker inside `state_dir()`. Named here, once:
+# `gc_state.py` must never prune it and `inject_context.py` rewrites it,
+# and until v0.40 each spelled the filename itself.
+AUTO_GC_MARKER = "_auto_gc.json"
 
 # v0.24 — os.replace retry budget (see save()). The reader-collision
 # window is micro-to-milliseconds; 8 attempts with a growing backoff
@@ -608,10 +615,17 @@ def record_edit_turn(session_id: str, turn_count: int | None) -> None:
         state = _load_for_mutation(session_id)
         if state is None:
             return
+        # Save only when something changes (v0.40). Every accepted Edit
+        # called this and every call rewrote the whole file — on a turn
+        # with N edits, N-1 of those writes stored bytes identical to the
+        # ones already on disk.
+        changed = not state.get("edited_since_last_stop")
         state["edited_since_last_stop"] = True
-        if turn_count is not None:
+        if turn_count is not None and state.get("last_edit_turn") != turn_count:
             state["last_edit_turn"] = turn_count
-        save(state)
+            changed = True
+        if changed:
+            save(state)
 
 
 def clear_edit_flag(session_id: str) -> None:

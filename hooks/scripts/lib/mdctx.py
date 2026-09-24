@@ -31,10 +31,20 @@ Public API
 from __future__ import annotations
 
 import re
-from typing import NamedTuple
+from collections import namedtuple
+
+# `collections.namedtuple` rather than `typing.NamedTuple` (v0.40): the
+# typing module costs ~4 ms to import and this module sits on the Stop
+# and Edit paths of every session; the tuple is the same either way.
+_LineCtxBase = namedtuple(
+    "LineCtx",
+    ("index", "raw", "in_fence", "fence_info", "is_fence_delim", "quoted",
+     "countable", "attributable"),
+    defaults=(True,),
+)
 
 
-class LineCtx(NamedTuple):
+class LineCtx(_LineCtxBase):
     """One physical line's attribution context.
 
     Two verdicts, deliberately asymmetric (v0.27.0):
@@ -55,15 +65,13 @@ class LineCtx(NamedTuple):
     tldr immediately under a quote satisfies presence instead of
     mystifying the author. Collapsing the two into one predicate is what
     forced v0.26 to skip lazy continuation entirely.
+
+    Fields: ``index`` (int), ``raw`` (str), ``in_fence`` (bool),
+    ``fence_info`` (str), ``is_fence_delim`` (bool), ``quoted`` (bool),
+    ``countable`` (bool), ``attributable`` (bool, default True).
     """
-    index: int
-    raw: str
-    in_fence: bool
-    fence_info: str
-    is_fence_delim: bool
-    quoted: bool
-    countable: bool
-    attributable: bool = True
+
+    __slots__ = ()
 
 
 def fence_marker(stripped_line: str) -> str | None:

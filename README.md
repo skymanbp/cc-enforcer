@@ -208,7 +208,7 @@ they were accurate. What the guards *match* is unchanged and still bilingual;
 only what they *say* follows the switch. The samples on this page are English
 because English is the default.
 
-Ten scripts under [`hooks/scripts/`](hooks/scripts/) sit on fourteen shared
+Ten scripts under [`hooks/scripts/`](hooks/scripts/) sit on fifteen shared
 [`lib/`](hooks/scripts/lib/) modules. Only the four in the table above are
 registered as hooks; the other six (`register_read.py`, `manage_edicts.py`,
 `manage_sync_gate.py`, `gc_state.py`, `i18n_check.py`, `bench_hooks.py`) back
@@ -646,8 +646,9 @@ cc-enforcer/
 │       ├── gc_state.py          # session-state GC: CLI + auto-GC callee
 │       ├── i18n_check.py        # skeleton ↔ translation structural parity
 │       ├── bench_hooks.py       # per-hook latency benchmark (README §6)
-│       └── lib/                 # -- fourteen shared modules --
+│       └── lib/                 # -- fifteen shared modules --
 │           ├── hookio.py        # boundary: stdin payload -> UTF-8, never the locale codepage
+│           ├── lang.py          # boundary: the active language code, resolved once for every consumer
 │           ├── messages.py      # boundary: resolve guard text for CC_ENFORCER_LANG
 │           ├── messages_en.py   #   the English skeleton — every string a guard prints
 │           ├── messages_zh.py   #   its Chinese translation (same keys, same fields)
@@ -670,7 +671,7 @@ cc-enforcer/
 │   ├── run_demo.py              #   drives the real hooks, captures both transcripts
 │   ├── render_svg.py            #   transcript -> terminal SVG, zero dependencies
 │   └── out/*.svg                #   the committed images, pinned by tests/test_demo.py
-└── tests/                       # 752 black-box + unit tests (python -m unittest discover tests)
+└── tests/                       # 765 black-box + unit tests (python -m unittest discover tests)
     │                            # each file is named after what it covers — see tests/README.md
     ├── _helpers.py              #   shared run_hook(...) subprocess fixture
     ├── test_<hook>.py           #   black-box subprocess tests, one per hook entry point
@@ -682,7 +683,7 @@ cc-enforcer/
     └── test_audit_*.py          #   per-audit-round regression suites (v026 x2, v027)
 ```
 
-All scripts are covered by **752 tests** in [`tests/`](tests/) — black-box
+All scripts are covered by **765 tests** in [`tests/`](tests/) — black-box
 subprocess tests that launch each hook exactly as Claude Code does (module-level
 state, stdin, stdout buffering and exit codes all differ when a script is
 imported instead), plus unit tests for the shared models and the four drift

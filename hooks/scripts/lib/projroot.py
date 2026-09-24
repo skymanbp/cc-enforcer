@@ -30,6 +30,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# The plugin's own name, as it appears in every path it owns. `lib/state.py`,
+# `lib/edicts.py` and `lib/sync_gate.py` each spelled it themselves until
+# v0.40; a rename that missed one copy would have left that module reading
+# or writing the old directory, silently, both sides being failing-open.
+PLUGIN_NAME = "cc-enforcer"
+
+
+def config_file(root: Path, filename: str) -> Path:
+    """The path of a hand-edited config under a project root.
+
+    Both configs live at ``<root>/.claude/cc-enforcer/<filename>``; this is
+    the one spelling of that layout, shared by the edicts and sync-gate
+    resolvers (readers and writers alike).
+    """
+    return root / ".claude" / PLUGIN_NAME / filename
+
 
 def looks_like_project_root(p: Path) -> bool:
     """True if `p` carries a marker that strongly suggests a project root.

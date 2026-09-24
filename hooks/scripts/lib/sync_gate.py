@@ -63,41 +63,68 @@ from __future__ import annotations
 
 import os
 import sys
-from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
 
-try:
-    # because the ignore is unused on 3.11+ where tomllib resolves
-    import tomllib  # type: ignore[unused-ignore]
-except ModuleNotFoundError:
-    # because Python < 3.11 has no tomllib and the gate must fail open
-    tomllib = None  # type: ignore[assignment]
-
 from . import projroot, tomlio
 
-_PLUGIN_NAME = "cc-enforcer"
+_PLUGIN_NAME = projroot.PLUGIN_NAME
 _CONFIG_FILENAME = "sync-gate.toml"
 
 
 _VALID_MODES = {"any", "all"}
 
 
-@dataclass(frozen=True)
+# Plain `__slots__` classes rather than frozen dataclasses (v0.40): the
+# `dataclasses` import alone costs the Stop hook ~10 ms of interpreter
+# start-up (it pulls in `inspect`, `ast`, `dis`), on every turn, for two
+# record types. They keep the surface the callers use — keyword
+# construction with defaults, equality, a readable repr.
 class Group:
     """One co-update group from the config."""
-    name: str
-    when: tuple[str, ...]
-    require: tuple[str, ...]
-    note: str = ""
-    mode: str = "any"  # "any" | "all" — see the module docstring
+
+    __slots__ = ("name", "when", "require", "note", "mode")
+
+    def __init__(
+        self, *, name: str, when: tuple[str, ...], require: tuple[str, ...],
+        note: str = "", mode: str = "any",
+    ) -> None:
+        self.name = name
+        self.when = when
+        self.require = require
+        self.note = note
+        self.mode = mode  # "any" | "all" — see the module docstring
+
+    def _key(self) -> tuple:
+        return (self.name, self.when, self.require, self.note, self.mode)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Group) and self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash(self._key())
+
+    def __repr__(self) -> str:
+        return (f"Group(name={self.name!r}, when={self.when!r}, "
+                f"require={self.require!r}, note={self.note!r}, "
+                f"mode={self.mode!r})")
 
 
-@dataclass(frozen=True)
 class Violation:
     """One unmet group: `when` matched this session, `require` did not."""
-    group: Group
-    when_hits: tuple[str, ...]  # project-relative edited files that matched
+
+    __slots__ = ("group", "when_hits")
+
+    def __init__(self, *, group: Group, when_hits: tuple[str, ...]) -> None:
+        self.group = group
+        self.when_hits = when_hits  # project-relative edited files that matched
+
+    def __eq__(self, other: object) -> bool:
+        return (isinstance(other, Violation)
+                and (self.group, self.when_hits) == (other.group, other.when_hits))
+
+    def __repr__(self) -> str:
+        return f"Violation(group={self.group!r}, when_hits={self.when_hits!r})"
 
 
 def _warn(msg: str) -> None:
@@ -127,16 +154,13 @@ def config_path(cwd: str | None = None) -> Path | None:
     """
     candidates: list[Path] = []
     if cwd:
-        candidates.append(Path(cwd) / ".claude" / _PLUGIN_NAME / _CONFIG_FILENAME)
+        candidates.append(projroot.config_file(Path(cwd), _CONFIG_FILENAME))
     proj = os.environ.get("CLAUDE_PROJECT_DIR")
     if proj:
-        candidates.append(Path(proj) / ".claude" / _PLUGIN_NAME / _CONFIG_FILENAME)
-    try:
-        proc_cwd = Path.cwd()
-    except OSError:
-        proc_cwd = None
-    if proc_cwd is not None and _looks_like_project_root(proc_cwd):
-        candidates.append(proc_cwd / ".claude" / _PLUGIN_NAME / _CONFIG_FILENAME)
+        candidates.append(projroot.config_file(Path(proj), _CONFIG_FILENAME))
+    proc_cwd = projroot.cwd_if_project_root()
+    if proc_cwd is not None:
+        candidates.append(projroot.config_file(proc_cwd, _CONFIG_FILENAME))
     seen: set[Path] = set()
     for c in candidates:
         if c in seen:
@@ -179,11 +203,11 @@ def default_project_path(cwd: str | None = None) -> Path | None:
     """
     for candidate in (cwd, os.environ.get("CLAUDE_PROJECT_DIR")):
         if candidate:
-            return Path(candidate) / ".claude" / _PLUGIN_NAME / _CONFIG_FILENAME
+            return projroot.config_file(Path(candidate), _CONFIG_FILENAME)
     root = projroot.cwd_if_project_root()
     if root is None:
         return None
-    return root / ".claude" / _PLUGIN_NAME / _CONFIG_FILENAME
+    return projroot.config_file(root, _CONFIG_FILENAME)
 
 
 def _coerce_glob_list(raw: dict, field_name: str, gname: str) -> tuple[str, ...]:
@@ -219,10 +243,12 @@ def load(cwd: str | None = None) -> tuple[Path, list[Group]] | None:
     config (the normal case — the gate is per-project opt-in). Any
     parse / IO error degrades to None with a stderr diagnostic.
     """
-    if tomllib is None:
-        return None
     p = config_path(cwd)
     if p is None:
+        return None
+    # `available()` is what imports the parser; a project without a
+    # sync-gate.toml must not pay for it (v0.40).
+    if not tomlio.available():
         return None
     groups = load_file(p)
     if groups is None:
@@ -244,7 +270,7 @@ def load_file(p: Path) -> list[Group] | None:
     None means "unusable" (missing / unparseable); `[]` means "parsed, no
     usable groups" — the distinction `load()` already depended on.
     """
-    if tomllib is None:
+    if not tomlio.available():
         return None
     # Shared reader: strips a UTF-8 BOM and turns a non-UTF-8 file into a
     # diagnostic instead of an uncaught UnicodeDecodeError. Without it a
