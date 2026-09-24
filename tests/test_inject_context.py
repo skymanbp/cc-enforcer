@@ -70,12 +70,13 @@ class TestInjectContextDefault(unittest.TestCase):
             stdin_payload={"session_id": "t", "hook_event_name": "SessionStart"},
         )
         ctx = out["hookSpecificOutput"]["additionalContext"]
-        # v0.22: 11 numbered rules now, all must appear in the session-
-        # start injection. These tokens are language-neutral (rule
-        # numbers + the rules/ path), so they hold for the English
-        # skeleton default and every translation alike.
+        # Every numbered rule must appear in the session-start injection
+        # (12 since rule 12 shipped in v0.23; this list said 11 until the
+        # v0.40 sweep). These tokens are language-neutral (rule numbers +
+        # the rules/ path), so they hold for the English skeleton default
+        # and every translation alike.
         for label in ("01", "02", "03", "04", "05", "06", "07", "08", "09",
-                      "10", "11", "rules/"):
+                      "10", "11", "12", "rules/"):
             self.assertIn(label, ctx, msg=f"context missing {label!r}")
 
     def test_no_lang_env_var_uses_english(self) -> None:
@@ -148,7 +149,7 @@ class TestInjectContextEnglish(unittest.TestCase):
         )
         ctx = out["hookSpecificOutput"]["additionalContext"]
         for needle in (
-            "Decision-time triggers",
+            "per-turn reminder",
             "convergence",
             "fidelity",
             "read-before-edit",
@@ -454,6 +455,11 @@ class TestOutputCap(unittest.TestCase):
         tuned: a 120-character install root and three edicts rendered by
         the real renderer. Both are ordinary. If this fails, the contract
         has grown again and the edicts are what will be dropped.
+
+        All four injected prompts are held to it. Until the v0.40 sweep
+        only the two SessionStart contracts were, while the per-turn
+        prompt had LESS headroom than either of them and was the one
+        re-sent on every turn.
         """
         from lib import edicts as ed
         three = [
@@ -465,17 +471,22 @@ class TestOutputCap(unittest.TestCase):
         original = ic.PLUGIN_ROOT
         try:
             ic.PLUGIN_ROOT = "C:" + "\\" + "x" * 117    # 120 characters
-            for lang, rel in (("en", "session-start.md"),
-                              ("zh", "zh/session-start.md")):
-                with self.subTest(lang=lang):
+            for lang, rel, event in (
+                ("en", "session-start.md", "SessionStart"),
+                ("zh", "zh/session-start.md", "SessionStart"),
+                ("en", "user-prompt.md", "UserPromptSubmit"),
+                ("zh", "zh/user-prompt.md", "UserPromptSubmit"),
+            ):
+                with self.subTest(lang=lang, event=event):
                     body = (PLUGIN_ROOT / "prompts" / rel).read_text(
                         encoding="utf-8")
-                    block = "\n" + ed.render_injection(three, lang=lang)
-                    out = ic.build_context("session-start.md", body, block)
+                    block = "\n" + ed.render_injection(
+                        three, lang=lang, chrome=(event == "SessionStart"))
+                    out = ic.build_context(rel.rsplit("/", 1)[-1], body, block)
                     self.assertLessEqual(len(out), ic.OUTPUT_CAP)
                     self.assertIn(
                         "E03", out,
-                        f"the {lang} contract no longer leaves room for three "
+                        f"the {lang} {rel} no longer leaves room for three "
                         f"edicts at a 120-character install root — it is "
                         f"{len(body)} characters against a {ic.OUTPUT_CAP} cap, "
                         f"and the edicts are what gets dropped",
@@ -673,6 +684,158 @@ class TestSyncCheckIsASchemaField(unittest.TestCase):
                     self.assertLessEqual(len(ctx), ic.OUTPUT_CAP)
                     self.assertIn(
                         "同步核对" if lang == "zh" else "sync-check", ctx)
+
+
+class TestPerTurnReminder(unittest.TestCase):
+    """The per-turn injection is short, AND it still names every hard gate.
+
+    Both halves are the contract. The reminder was cut from 7,075 to
+    about 2.6k characters in the v0.40 sweep because two thirds of it
+    restated the SessionStart contract and every prompt paid for it
+    again. The cut is legitimate only while nothing the hooks actually
+    enforce falls out of it, so the tokens asserted here are derived from
+    the guards rather than typed in: a gate the reminder stops naming
+    fails here, not in the field.
+    """
+
+    # Characters. The English contract that this reminder points back to
+    # is ~6.8k; the reminder must stay well under half of it, or it has
+    # started to become the contract again.
+    CAPS = {"user-prompt.md": 2700, "zh/user-prompt.md": 2000}
+
+    # Closed sets keyed by the guard's own identifiers, so a new pattern
+    # fails the equality check below until the reminder names it.
+    BASH_TOKENS = {
+        "no_verify": "--no-verify",
+        "no_gpg_sign": "--no-gpg-sign",
+        "chmod_777": "chmod 777",
+        "rebase_skip": "git rebase --skip",
+        "break_system_packages": "--break-system-packages",
+        "rm_rf_root": "rm -rf",
+    }
+    FORCE_PUSH_TOKEN = "git push --force"     # a detector, not a static pattern
+    BARE_SWALLOW_TOKEN = "try/except: pass"    # _scan_bare_try_except_pass
+    SCHEMA_FIELDS = {
+        "user-prompt.md": ("before", "edits", "convergence", "fidelity",
+                           "closing", "sync-check:", "tldr"),
+        "zh/user-prompt.md": ("改前", "改中", "收敛", "忠实", "收尾",
+                              "同步核对:", "tldr"),
+    }
+    ROLLING_PHRASE = {
+        "user-prompt.md": "{n}th small edit",
+        "zh/user-prompt.md": "第 {n} 次小改",
+    }
+
+    def _text(self, rel: str) -> str:
+        return (PLUGIN_ROOT / "prompts" / rel).read_text(encoding="utf-8")
+
+    @staticmethod
+    def _marker_token(label: str) -> str:
+        """The spelling a reader recognises, derived from read_guard's label.
+
+        Labels read "<language>: <marker> without rationale" or
+        "<language>: <marker> used to ..."; the marker may carry a `//`
+        comment prefix and an optional-suffix bracket, neither of which
+        the prompt needs to spell. Derived rather than written out here
+        because this file is itself held to the plugin's content
+        detectors (TestPluginIsSelfRewritable), and a literal copy of the
+        markers is exactly what they flag.
+        """
+        marker = label.split(": ", 1)[1]
+        marker = re.split(r" (?:without|used) ", marker, maxsplit=1)[0]
+        marker = re.sub(r"^//\s*", "", marker)
+        return marker.split("[", 1)[0]
+
+    def test_per_turn_prompt_stays_short(self) -> None:
+        for rel, cap in self.CAPS.items():
+            with self.subTest(prompt=rel):
+                size = len(self._text(rel))
+                self.assertLessEqual(
+                    size, cap,
+                    f"{rel} is {size} characters; it is re-injected on every "
+                    f"prompt, so growth here is paid on every turn",
+                )
+
+    def test_per_turn_reminder_states_every_hard_constraint(self) -> None:
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        import bash_guard  # noqa: E402 -- after the path bootstrap above
+        import read_guard  # noqa: E402 -- after the path bootstrap above
+        import stop_guard  # noqa: E402 -- after the path bootstrap above
+        from lib import editscale  # noqa: E402 -- after the path bootstrap above
+
+        self.assertEqual(
+            set(self.BASH_TOKENS), {p["slug"] for p in bash_guard.STATIC_PATTERNS},
+            "bash_guard grew or lost a static pattern; register its token",
+        )
+        patch_tokens = [self._marker_token(label)
+                        for label, _ in read_guard.PATCH_MARKERS]
+        self.assertEqual(len(patch_tokens), 6, patch_tokens)
+        hedge = re.compile(stop_guard._HEDGE_INNER, re.IGNORECASE)
+        for rel, fields in self.SCHEMA_FIELDS.items():
+            with self.subTest(prompt=rel):
+                text = self._text(rel)
+                for tok in (*self.BASH_TOKENS.values(), self.FORCE_PUSH_TOKEN,
+                            *patch_tokens, self.BARE_SWALLOW_TOKEN):
+                    self.assertIn(tok, text, f"{rel} no longer names {tok!r}")
+                for layer in stop_guard._LAYER_IDS:
+                    self.assertIn(f"({layer})", text,
+                                  f"{rel} no longer names Stop layer ({layer})")
+                self.assertIn(str(stop_guard.TLDR_MAX_ITEM_COLUMNS), text)
+                self.assertIn(
+                    self.ROLLING_PHRASE[rel].format(
+                        n=read_guard.ROLLING_PATCH_THRESHOLD), text)
+                self.assertIn(str(editscale.SMALL_EDIT_MAX_LINES), text)
+                self.assertIn(str(editscale.SMALL_EDIT_MAX_CHARS), text)
+                for field in fields:
+                    self.assertIn(f"`{field}`", text,
+                                  f"{rel} no longer names schema field {field!r}")
+                # The sync field it names must be a live Stop marker.
+                sync_field = fields[-2]
+                self.assertTrue(stop_guard._has_sync_marker(
+                    f"{sync_field} co-files updated"))
+                # And every hedge it advertises must really be one.
+                b_segment = text.split("(b)", 1)[1].split("(c)", 1)[0]
+                examples = re.findall(r"`([^`]+)`", b_segment)
+                self.assertGreaterEqual(len(examples), 3)
+                for example in examples:
+                    self.assertTrue(
+                        hedge.search(example),
+                        f"{rel} advertises {example!r} as a hedge; the "
+                        f"detector does not match it",
+                    )
+
+    def test_edict_chrome_only_on_session_start(self) -> None:
+        """The per-turn edict table drops its intro and footer sentences.
+
+        SessionStart explained what `must` / `should` mean; repeating the
+        explanation on every prompt costs ~250 characters a turn. The
+        data rows are identical in both, because they are what the
+        elision boundary in `_clip_edicts` is keyed to.
+        """
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / ".claude" / "cc-enforcer"
+            cfg.mkdir(parents=True)
+            (cfg / "edicts.toml").write_text(
+                '[[edicts]]\nid = "E01"\ntext = "use prisma, never mongoose"\n',
+                encoding="utf-8",
+            )
+            ctx: dict[str, str] = {}
+            for event in ("SessionStart", "UserPromptSubmit"):
+                _, out, err = run_hook(
+                    [INJECT, "--event", event],
+                    stdin_payload={"session_id": "t", "hook_event_name": event},
+                    env_overrides={"CLAUDE_PROJECT_DIR": tmp},
+                )
+                self.assertIsNotNone(out, err)
+                ctx[event] = out["hookSpecificOutput"]["additionalContext"]
+        for event, text in ctx.items():
+            self.assertIn("| `E01` |", text, f"{event} lost the edict row")
+        self.assertIn("hot-reloadable", ctx["SessionStart"])
+        self.assertNotIn("hot-reloadable", ctx["UserPromptSubmit"])
+        self.assertIn("PreToolUse DENY; the deny reason", ctx["SessionStart"])
+        self.assertNotIn("PreToolUse DENY; the deny reason",
+                         ctx["UserPromptSubmit"])
 
 
 if __name__ == "__main__":

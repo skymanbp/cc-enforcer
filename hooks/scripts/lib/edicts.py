@@ -380,7 +380,7 @@ _INJECT_STRINGS = {
 # Soft-layer injection rendering.
 # --------------------------------------------------------------------------- #
 def render_injection(
-    edicts: list[Edict], *, lang: str | None = None,
+    edicts: list[Edict], *, lang: str | None = None, chrome: bool = True,
 ) -> str:
     """Render the edicts as a compact markdown block for injection.
 
@@ -393,18 +393,21 @@ def render_injection(
     inject_context.py reuses its `_resolved_lang()` result for
     consistency between the base prompt language and the edict block
     language). An unregistered code falls back to English chrome.
+
+    `chrome=False` drops the intro and footer sentences and keeps only the
+    title and the table. The per-turn reminder uses it: the semantics of
+    `must` / `should` were explained by the SessionStart block, and every
+    character of the per-turn injection is paid again on every prompt.
+    The data rows are identical either way, so the elision boundary in
+    `inject_context._clip_edicts` sees the same shape.
     """
     if not edicts:
         return ""
     s = _INJECT_STRINGS.get(_resolved_lang(lang), _INJECT_STRINGS["en"])
-    lines = [
-        "",
-        "---",
-        "",
-        s["title"],
-        "",
-        s["intro"],
-        "",
+    lines = ["", "---", "", s["title"], ""]
+    if chrome:
+        lines += [s["intro"], ""]
+    lines += [
         f"| {s['th_id']} | {s['th_sev']} | {s['th_imp']} | {s['th_hard']} |",
         "|----|----------|-----------|---------------|",
     ]
@@ -420,8 +423,8 @@ def render_injection(
         text = e.text.replace("|", r"\|").replace("\n", " ")
         lines.append(f"| `{e.id}` | {sev} | {text} | {hard} |")
     lines.append("")
-    lines.append(s["footer"])
-    lines.append("")
+    if chrome:
+        lines += [s["footer"], ""]
     return "\n".join(lines)
 
 

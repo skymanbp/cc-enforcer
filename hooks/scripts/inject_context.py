@@ -361,7 +361,13 @@ def main() -> int:
     edict_block = ""
     try:
         loaded = edicts_lib.load()
-        block = edicts_lib.render_injection(loaded, lang=_resolved_lang())
+        # The per-turn reminder gets the table without its intro / footer
+        # sentences: SessionStart already explained must / should, and the
+        # per-turn payload is re-sent on every prompt.
+        block = edicts_lib.render_injection(
+            loaded, lang=_resolved_lang(),
+            chrome=(args.event == "SessionStart"),
+        )
         if block:
             edict_block = "\n" + block
             additional_context = additional_context.rstrip()

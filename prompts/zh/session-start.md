@@ -29,15 +29,15 @@
 | 你试图 | 判决 |
 |---|---|
 | Edit 一个本会话**没 Read 过**的已存在文件 | `PreToolUse(Edit\|Write)` DENY |
-| Edit/Write 含未带 why 的屏蔽标记 —— `try/except: pass` / `# noqa` / `# type: ignore` / `@ts-ignore` / `@ts-expect-error` / `eslint-disable` / `time.sleep` 绕过（紧邻一行 why 注释即可放行，中英皆可：`because` / `因为`） | `PreToolUse(Edit\|Write)` DENY |
+| Edit/Write 含未带 why 的屏蔽标记 —— `try/except: pass` / `# noqa` / `# type: ignore` / `@ts-ignore` / `@ts-expect-error` / `eslint-disable` / `time.sleep` 绕过（紧邻一行带理由词的 why 注释即可放行：`because` / `因为` / `rationale` …） | `PreToolUse(Edit\|Write)` DENY |
 | Edit/Write 往**代码**里塞未辩护的硬编码密钥 —— 密钥命名字面量 ≥ 8 字符 / PEM 私钥头 / `AKIA…` / `ghp_…` `xox…` `AIza…` / URL 内凭证 | `PreToolUse(Edit\|Write)` DENY（rule 10） |
 | Edit/Write 往**代码**里塞未辩护的用户特定绝对路径 —— `C:\Users\…` / `/home/<user>/…` / `$HOME` / `%USERPROFILE%` / 引号 `~/…`。散文文档 + 锁文件豁免 | `PreToolUse(Edit\|Write)` DENY（rule 11） |
 | 同一文件本会话第 4 次小幅 Edit（≤ 10 行 且 < 200 字符）而无系统式重写（≥ 50 行 / ≥ 1500 字符 / ≥ 该文件 30%）介入。**永远豁免**：净减少改动、记账类改动（只有版本号 / ISO 日期变化——散文档里纯整数也算） | `PreToolUse(Edit\|Write)` DENY |
 | Bash 含 `--no-verify` / `--no-gpg-sign` / `git push --force`（非 `--force-with-lease`）/ `chmod 777` / `git rebase --skip` / `--break-system-packages` / `rm -rf` 打到根 / $HOME / ~ | `PreToolUse(Bash)` DENY |
-| Stop 时声称完成但**没**验证证据 / 含 hedge / 缺自答 / 缺忠实 / 缺 rule-08 标记 / 缺 rule-09 三件套 | `Stop` 9 层 BLOCK |
-| Stop 时声称改了某文件，而它的 mtime 与本会话首次见到时**完全一致**（`CC_ENFORCER_DISABLE_LAYER_G=1` 可跳过） | `Stop` **layer (g)** BLOCK |
+| Stop 时声称完成但**没**验证证据 (a) / 含 hedge (b) / 缺自答 (c) / 缺忠实 (d) / 缺 rule-08 标记 (e) / 缺 rule-09 三件套 (f) | `Stop` BLOCK，layer (a)–(f) |
+| Stop 时声称改了某文件，而它的 mtime 与本会话首次见到时**完全一致** | `Stop` **layer (g)** BLOCK |
 | Stop 时含 done-claim 但**缺 `tldr` / 大白话**，或某条 tldr 超过 **160 显示列**（CJK 每字算 2 列，约 80 汉字） | `Stop` **layer (h)** BLOCK |
-| Stop 时本轮做了 Edit、sync-gate 某组 `when` 命中而无 `require` 编辑、回复又无同步标记 | `Stop` **layer (i)** BLOCK（rule 12） |
+| Stop 时本轮做了 Edit、sync-gate 某组 `when` 命中而无 `require` 编辑、又没有 `同步核对:` 行回答上一次拦截点名的组 | `Stop` **layer (i)** BLOCK（rule 12） |
 
 **拒绝消息自带出口** —— headline 点名失败层、逐层状态表、`[恢复指引 — …]` 段、
 一行大白话。定位失败那一行，照 Recovery 做；**不要重读整个合约**。
@@ -51,8 +51,8 @@
 
 > 回复**末尾**必含这个 ```yaml 块。**字段名本身就是 Stop hook 的检测 marker，
 > 别改名。** 修改类任务用全量形；答疑用 `收敛` + `忠实` + `tldr`；无 done-claim
-> 的纯对话可整体省略。**任何含 done-claim 的回复都必须有 `tldr`** —— 每条一句话、
-> 不超过 160 显示列，否则 Stop **layer (h)** BLOCK。
+> 的纯对话可整体省略。**任何含 done-claim 的回复都必须有 `tldr`**（见上表 layer
+> (h)）。`同步核对` 填占位值（`无` / `n/a` / `-`）按缺失处理。
 
 ```yaml
 cc-enforcer:
@@ -81,7 +81,8 @@ cc-enforcer:
 
 ---
 
-## 四、文档地址
+## 四、其余内容在哪
 
-决策时自检触发器每轮都会重新注入；那张表才是权威清单。
-规则：[`rules/zh/`](rules/zh/) · [`docs/RULES.md`](docs/RULES.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`CLAUDE.md`](CLAUDE.md)
+本合约是权威清单；每轮用户输入时只会重新注入上述硬门的一份短提醒。路径相对于
+头部所示插件根：完整规则 [`rules/zh/`](rules/zh/)（索引 [`rules/zh/00-index.md`](rules/zh/00-index.md)）·
+hook 契约 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。

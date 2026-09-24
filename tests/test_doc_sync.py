@@ -488,14 +488,6 @@ def _structure_tree_blocks(text: str) -> list[str]:
 # never hide among them, and so deleting an example fails here rather than
 # quietly shrinking what this gate covers.
 EXAMPLE_LINKS: dict[str, str] = {
-    # The injected prompt is read inside whatever repository cc-enforcer is
-    # installed into, so this link resolves against the CONSUMING project's
-    # own instruction file. It has never referred to this repository's — and
-    # since v0.38.2 this repository does not track one.
-    "prompts/session-start.md -> CLAUDE.md":
-        "points at the consuming project's own CLAUDE.md, not this repo's",
-    "prompts/zh/session-start.md -> CLAUDE.md":
-        "same as prompts/session-start.md, zh mirror",
     "prompts/session-start.md -> path#L42":
         "citation-format template in the injected prompt",
     "prompts/zh/session-start.md -> path#L42":

@@ -29,15 +29,15 @@
 | You try to | Verdict |
 |---|---|
 | Edit a pre-existing file you have NOT Read this session | `PreToolUse` DENY |
-| Edit/Write an unjustified suppression marker — `try/except: pass` / `# noqa` / `# type: ignore` / `@ts-ignore` / `@ts-expect-error` / `eslint-disable` / `time.sleep` workaround (an adjacent why-comment in any language clears it: `because` / `因为`) | `PreToolUse` DENY |
+| Edit/Write an unjustified suppression marker — `try/except: pass` / `# noqa` / `# type: ignore` / `@ts-ignore` / `@ts-expect-error` / `eslint-disable` / `time.sleep` workaround (an adjacent why-comment carrying a rationale word clears it: `because` / `因为` / `rationale` …) | `PreToolUse` DENY |
 | Edit/Write **code** with an unjustified hardcoded secret — secret-named literal ≥ 8 chars / PEM header / `AKIA…` / `ghp_…` `xox…` `AIza…` / credentials-in-a-URL | `PreToolUse` DENY (rule 10) |
-| Edit/Write **code** with an unjustified user-specific absolute path — `C:\Users\…` / `/home/<user>/…` / `$HOME` / quoted `~/…`. Prose docs + lockfiles exempt | `PreToolUse` DENY (rule 11) |
+| Edit/Write **code** with an unjustified user-specific absolute path — `C:\Users\…` / `/home/<user>/…` / `$HOME` / `%USERPROFILE%` / quoted `~/…`. Prose docs + lockfiles exempt | `PreToolUse` DENY (rule 11) |
 | 4th small Edit (≤ 10 lines AND < 200 chars) to one file this session with no systematic rewrite (≥ 50 lines / ≥ 1500 chars / ≥ 30% of that file) between. **Exempt, always:** a net reduction, or a bookkeeping edit (only version / ISO-date literals differ — bare integers too in prose docs) | `PreToolUse` DENY |
 | Bash with `--no-verify` / `--no-gpg-sign` / `git push --force` (not `--force-with-lease`) / `chmod 777` / `git rebase --skip` / `--break-system-packages` / `rm -rf` on root / $HOME / ~ | `PreToolUse(Bash)` DENY |
-| Stop declaring done but missing evidence / hedged / missing self-quiz / missing fidelity / missing rule-08 marker / missing rule-09 triplet | `Stop` 9-layer BLOCK |
-| Stop claiming `I edited X.py` when the file's mtime is unchanged since you first saw it (`CC_ENFORCER_DISABLE_LAYER_G=1` skips) | `Stop` **layer (g)** BLOCK |
+| Stop declaring done but missing evidence (a) / hedged (b) / missing self-quiz (c) / missing fidelity (d) / missing rule-08 marker (e) / missing rule-09 triplet (f) | `Stop` BLOCK, layers (a)–(f) |
+| Stop claiming `I edited X.py` when the file's mtime is unchanged since you first saw it | `Stop` **layer (g)** BLOCK |
 | Stop with a done-claim but **no `tldr`**, or a tldr item past **160 display columns** (CJK counts 2 per char, so ≈ 80 汉字) | `Stop` **layer (h)** BLOCK |
-| Stop on an edit turn where a sync-gate `when` group matched, no `require` file was edited, and the reply has no sync marker | `Stop` **layer (i)** BLOCK (rule 12) |
+| Stop on an edit turn where a sync-gate `when` group matched, no `require` file was edited, and no `sync-check:` line answers the group a previous block named | `Stop` **layer (i)** BLOCK (rule 12) |
 
 **The deny message carries its own recovery** — a headline naming the FAIL
 layer, a status table, a `[Recovery — …]` section and a plain-words line. Find
@@ -54,8 +54,8 @@ is blocked again.
 > End your reply with this ```yaml block. **The field names ARE the Stop-hook
 > detection markers — don't rename them.** Modification tasks use the full
 > form; Q&A uses `convergence` + `fidelity` + `tldr`; pure chat with no
-> done-claim may omit it. **Any reply containing a done-claim needs `tldr`** —
-> one sentence per item, ≤ 160 display columns, else Stop **layer (h)** BLOCK.
+> done-claim may omit it. **Any reply containing a done-claim needs `tldr`**
+> (layer (h) above). A `sync-check` placeholder (`n/a` / `-`) counts as absent.
 
 ```yaml
 cc-enforcer:
@@ -84,7 +84,9 @@ cc-enforcer:
 
 ---
 
-## 4. Documentation locations
+## 4. Where the rest lives
 
-Decision-time triggers are re-injected every turn; that table is authoritative.
-Rules: [`rules/`](rules/) · [`docs/RULES.md`](docs/RULES.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`CLAUDE.md`](CLAUDE.md)
+This contract is authoritative; every user prompt re-injects only a short
+reminder of the gates above. Paths are relative to the plugin root named in
+the header: full rules [`rules/`](rules/) (index [`rules/00-index.md`](rules/00-index.md)) ·
+hook contracts [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
