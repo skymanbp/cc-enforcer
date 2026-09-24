@@ -2,1096 +2,563 @@
 
 > Audience: developers extending or auditing the plugin.
 > Doc index: [`./README.md`](./README.md). Companion docs:
-> the repository's Contributing section (project-level rules),
-> [`./RULES.md`](./RULES.md) (catalog of every rule),
+> [`./CONTRIBUTING.md`](./CONTRIBUTING.md) (how to change this repository),
+> [`./RULES.md`](./RULES.md) (the rule catalog, in Chinese; the English index
+> is [`../rules/00-index.md`](../rules/00-index.md)),
 > [`../tests/README.md`](../tests/README.md) (the suite, file by file).
+>
+> This document describes the plugin **as it is**. Why each part came to be
+> this way — the field failures, the measurements, the versions — is in
+> [`../CHANGELOG.md`](../CHANGELOG.md), one entry per release.
 
 ---
 
 ## 1. Why a layered design
 
-A single mechanism can never enforce discipline reliably. Prompt injection can be
-ignored by a confident-and-wrong agent; a hard tool block can be bypassed by
-re-phrasing; a subagent verifier only fires when invoked. We therefore stack
-**five independent layers**, each catching a different failure mode:
+A single mechanism can never enforce discipline reliably. Prompt injection can
+be ignored by a confident-and-wrong agent; a hard tool block can be bypassed by
+re-phrasing; a subagent verifier only fires when invoked. So five independent
+layers stack, each catching a different failure mode:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 5 — LLM-agnostic core (rules/ — plain Markdown)      │  source of truth
-├─────────────────────────────────────────────────────────────┤
-│  Layer 4 — Skill (auto-invoked on debugging language)       │  contextual nudge
-├─────────────────────────────────────────────────────────────┤
-│  Layer 3 — Verifier subagent (independent re-reader)        │  citation audit
-├─────────────────────────────────────────────────────────────┤
-│  Layer 2 — Slash commands (user/agent-triggered)            │  on-demand
-├─────────────────────────────────────────────────────────────┤
-│  Layer 1 — Hooks (always-on prompt injection)               │  always-on
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  Layer 5 — LLM-agnostic rule pack (rules/ — plain Markdown)     │  source of truth
+├─────────────────────────────────────────────────────────────────┤
+│  Layer 4 — Skills (auto-invoked on debugging / audit language)  │  contextual nudge
+├─────────────────────────────────────────────────────────────────┤
+│  Layer 3 — Verifier subagent (independent re-reader)            │  citation audit
+├─────────────────────────────────────────────────────────────────┤
+│  Layer 2 — Slash commands (user/agent-triggered)                │  on-demand
+├─────────────────────────────────────────────────────────────────┤
+│  Layer 1 — Hooks: prompt injection + hard DENY / BLOCK gates    │  always-on
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 Failure of any one layer does not collapse the system; the next layer still
-catches the lazy behaviour, often via a different signal.
+catches the lazy behaviour, usually through a different signal.
 
 ---
 
-## 2. Layer 1 — Hooks (always-on)
+## 2. Layer 1 — Hooks
 
-**Wired in:** [`../hooks/hooks.json`](../hooks/hooks.json).
-**Implementations:**
-- Soft injection: [`../hooks/scripts/inject_context.py`](../hooks/scripts/inject_context.py)
-- Read-before-edit guard: [`../hooks/scripts/read_guard.py`](../hooks/scripts/read_guard.py) + [`../hooks/scripts/lib/state.py`](../hooks/scripts/lib/state.py)
-- Bash guard (bypass patterns + register-as-read): [`../hooks/scripts/bash_guard.py`](../hooks/scripts/bash_guard.py)
-- Register stub (v0.4.0): [`../hooks/scripts/register_read.py`](../hooks/scripts/register_read.py)
-- Stop guard (v0.6.0 → … → v0.23.0, rule 01 + 06 + 07 + 08 + 09 + 12 + TL;DR enforcement): [`../hooks/scripts/stop_guard.py`](../hooks/scripts/stop_guard.py) + [`../hooks/scripts/lib/sync_gate.py`](../hooks/scripts/lib/sync_gate.py)
-- **Shared judgement models (v0.26.0)** — four modules that exist because
-  every guard had been answering a *structural* question with a *textual*
-  test, and each audit round regenerated the same defect class:
-  - [`../hooks/scripts/lib/srclex.py`](../hooks/scripts/lib/srclex.py) —
-    tolerant source lexer. Answers "is this `#` a comment, a docstring, or
-    data?", "where does this literal end?", and "which physical lines form
-    one logical line?". Deliberately a **lexer, not a parser**: an Edit's
-    `new_string` is usually not a syntactically complete unit, so `ast` /
-    `tokenize` would raise on ordinary input and force a fallback that
-    recreates the original bug. Consumed by `read_guard`'s rule 09/10/11
-    detectors. It is what makes the rationale hatch mean "a why-**comment**"
-    (previously `line.find("#")` found the `#` inside a URL, so one
-    neighbouring `https://api.example.com` line disabled the secret detector).
-  - [`../hooks/scripts/lib/mdctx.py`](../hooks/scripts/lib/mdctx.py) —
-    markdown line context (fence state + info string, blockquote including
-    nesting under list items and CommonMark lazy continuation). Consumed by
-    **both** halves of Stop layer (h); they previously carried partial
-    private copies of this judgement and disagreed about which fences count.
-    **v0.27** splits the verdict in two, because one flag could not serve
-    both halves: `attributable` (generous — "could a reader read this as
-    the agent's own words?", used for PRESENCE, since a false negative
-    blocks a reply for a tldr that is visibly present) and `countable`
-    (conservative — "is this definitely the agent's own words?", used for
-    MEASUREMENT against the tldr cap — 160 **display columns** since
-    v0.35). They differ only on lazy continuation, which is exactly why
-    v0.26 could not implement it.
-  - [`../hooks/scripts/lib/shellcmd.py`](../hooks/scripts/lib/shellcmd.py) —
-    shell command model: tokenise → segments → argv, plus `git_subcommand`
-    (skipping value-taking global options) and `python_script_arg` (knowing
-    that `-c` / `-m` take code/module operands, not scripts). Consumed by
-    `bash_guard`'s force-push detector *and* its register parser, which were
-    two independent text heuristics that had already drifted apart.
-  - [`../hooks/scripts/lib/editscale.py`](../hooks/scripts/lib/editscale.py)
-    (**v0.35**) — change-scale model: `classify_change(old, new, scale)`
-    answers "how big is this edit *relative to the file it edits*", plus
-    the two shapes that are never rolling patches (`is_net_reduction`,
-    `is_bookkeeping_edit`). Consumed by `read_guard`'s rule-09 frequency
-    layer, which keeps only the *frequency* policy (how many small edits
-    per file before DENY). Same reason as the three above: the
-    classification had only ever been reachable through a hook payload,
-    so its worst case — a file below both absolute floors, where NO edit
-    can qualify as systematic and the counter can never be reset —
-    survived twenty-two releases because every test fixture happened to
-    be one line long. A model with a signature can be asked directly.
-- **Payload decoding shared by all four hook entries (v0.37)**:
-  [`../hooks/scripts/lib/hookio.py`](../hooks/scripts/lib/hookio.py) —
-  `read_payload_text()` reads stdin's **binary** buffer and decodes it as
-  UTF-8 strictly, because JSON interchange text is UTF-8 (RFC 8259 §8.1)
-  and the hook contract negotiates no alternative. Every entry point used
-  `sys.stdin.read()` instead, which decodes with the *locale* codepage
-  under the `surrogateescape` error handler: on a non-UTF-8 host the
-  payload was silently rewritten and each guard then scanned a string the
-  agent never wrote. Measured on cp936, `—` (U+2014) arrived as two
-  characters instead of one — enough to push an inline note past
-  `read_guard`'s rationale floor and turn a rule-09 DENY into an ALLOW —
-  and every CJK marker `stop_guard` looks for (`大白话`, `同步核对`,
-  `我觉得`, the done-claim patterns themselves) decoded to mojibake, so
-  the Chinese half of nine layers matched nothing in production. This is
-  the same failure `tomlio` fixed one boundary over in v0.25 — *silent
-  disablement of enforcement by a wrong decode* — swept, twelve releases
-  late, to the boundary every single hook invocation goes through. It
-  survived 691 tests because `tests/_helpers.py` serialised payloads with
-  `json.dumps`'s `ensure_ascii=True` default, so the wire was pure ASCII
-  and the decode had nothing to get wrong; the harness now sends raw
-  UTF-8, and `tests/test_hookio.py` pins that it does.
-- **Message catalog shared by all three guards (v0.38)**:
-  [`../hooks/scripts/lib/messages.py`](../hooks/scripts/lib/messages.py) +
-  `messages_en.py` (skeleton, 86 keys) + `messages_zh.py` (translation).
-  Everything a guard *prints* used to be a module constant in the guard, and
-  those constants were **bilingual**: an English body, a Chinese `大白话:` line
-  on every block reason, Chinese phrasings offered inline. `CC_ENFORCER_LANG`
-  reached the injected prompts and nothing else. Both READMEs quoted real
-  samples of that output, so both READMEs mixed languages — accurately, which
-  is why neither could be cleaned without fabricating output. The text now
-  resolves **per key** on the same skeleton-plus-translation contract as
-  `rules/` and `prompts/`, so a partial translation degrades to English rather
-  than blanking a deny. A Python dict rather than markdown beside `prompts/`
-  for two measured reasons: these strings are read on *every* hook invocation,
-  which sits in the critical path §6 of the README publishes the cost of; and a
-  dict can be gated on exact key sets and per-key `str.format` field sets,
-  where markdown can only be gated on heading shape. The English half was
-  **generated** from the pre-v0.38 constants and verified byte-identical before
-  anything else moved, so the extraction itself could not change behaviour.
-- **Project-root detection shared by both config loaders (v0.30)**: [`../hooks/scripts/lib/projroot.py`](../hooks/scripts/lib/projroot.py). Both hand-edited configs (`edicts.toml`, `sync-gate.toml`) fall back to the process cwd when `CLAUDE_PROJECT_DIR` is missing — which Claude Code's Bash tool does not reliably propagate on Windows (the v0.18.1 finding) — but only when that cwd carries a `.git` / `.claude` marker, so a session started in `~/Downloads` cannot load a stranger's hard rules. The predicate lived in both loaders until v0.30, the second copy annotated *"Same project-root heuristic as lib/edicts.py"*: a comment that names an invariant without holding it, so widening one copy leaves the other silently behind. Same answer `tomlio` gave one layer down.
-- Hardened TOML reader shared by both config loaders (v0.25): [`../hooks/scripts/lib/tomlio.py`](../hooks/scripts/lib/tomlio.py) — strips a UTF-8 BOM and turns a non-UTF-8 config into a stderr diagnostic instead of an uncaught `UnicodeDecodeError`. Both configs drive hard guards, and in both the failure was *silent disablement* of enforcement: a GBK-saved `edicts.toml` escaped `edicts.load()` and unwound past every downstream check in `read_guard`, switching off read-before-edit for the whole session. **v0.25.1 extends this to the parsed values, not just the bytes**: `severity = ["must"]` / `mode = []` are valid TOML, and `value not in SET` raises `TypeError: unhashable type` — which escaped the same two loaders through a different door. Both now type-check before the membership test, and `manage_edicts.py` was finally routed through this module too (v0.25 wired the two hook-side loaders and never swept the tree, so `edict list / add / remove` still crashed on a file the hooks read fine — the repo-wide-sync omission rule 12 exists to catch).
+**Wired in:** [`../hooks/hooks.json`](../hooks/hooks.json). Five entries, four
+scripts, four events:
 
-### The injection budget (v0.29, gated v0.39)
-
-Claude Code caps hook output — `additionalContext` included — at **10,000
-characters**, and replaces anything longer with a file path plus a short
-preview. A contract the agent can only see the first two kilobytes of is not a
-contract: the field failure was a session where §3, the mandatory reply schema,
-sat past the preview boundary and went unread from start to finish.
-
-`inject_context.build_context` therefore splits the payload into two parts with
-different rights. The **contract is protected**; the **edict block is what
-yields**, elided at whole-edict boundaries — half an edict still reads as a
-complete instruction — with a pointer to `/cc-enforcer:edict list` in its place.
-Every payload also leads with a self-locating header naming the plugin root, so
-a truncated preview still says where the full text lives.
-
-Two things about it were wrong until v0.38.3, and both were found by cloning
-the repository to a long path rather than by reading the function:
-
-- When the contract *alone* filled the budget, the function returned **without
-  saying so**. Every edict vanished and nothing reported it, so a session on a
-  deeply-nested install was governed by rules it had never been shown. That is
-  the v0.34.1 defect — all edicts elided, notice reporting 0 — living in the
-  sibling branch. It now reports the count, through the same counter
-  `_clip_edicts` uses to place its cuts.
-- The header printed the install root **twice**, and the repeat came out of the
-  budget the header exists to protect. Naming it once took a 300-character root
-  from losing every edict to keeping them.
-
-The deeper problem was that **nothing gated the split**. The contract had eaten
-its own headroom over nine releases — 991 characters spare at v0.29, 914 at
-v0.32, 552 at v0.35 — until a real install path plus two real edicts no longer
-fit. v0.39 thinned it to 6,627 characters (3,373 spare) by removing duplication
-rather than content: §2's Recovery column is printed at deny time anyway, and
-§1's paragraph rows had grown into §2's job. `test_inject_context`'s
-`test_a_realistic_install_keeps_a_realistic_edict_set` now holds the line with
-deliberately ordinary parameters — a 120-character install root and three
-edicts through the real renderer, in both languages.
-
-Five hook entries across four events:
-
-| Event | Matcher | Script | Purpose |
+| Event | Matcher | Script | Does |
 |---|---|---|---|
-| `SessionStart` | — | `inject_context.py` | Inject full discipline summary at session boot; then run the two maintenance passes (opt-in auto-GC of old session state, `CLAUDE_ENV_FILE` dedupe) |
-| `UserPromptSubmit` | — | `inject_context.py` | Inject compact per-turn reminder |
-| `PreToolUse` | `Read\|Edit\|Write` | `read_guard.py` | Record on Read/Write; deny Edit/Write of unread existing file (rule 04 + 08); deny Edit/Write with unjustified patch-style new_string (rule 09), hardcoded secret (rule 10), or user-home path dependency (rule 11) in code targets; record the edit-turn signal for Stop layers (e)/(f)/(g)/(i) — `edited_since_last_stop` flag always, plus `last_edit_turn` when the payload supplies a turn_count (v0.23: production payloads do NOT); record accepted edits into `edited_files` for Stop layer (i) (rule 12, v0.23) |
-| `PreToolUse` | `Bash` | `bash_guard.py` | Deny on bypass patterns (rule 03 + 09); also register file-as-read on `register_read.py` invocation |
-| `Stop` | — | `stop_guard.py` | Nine-layer block: (a) no-evidence / (b) hedged-completion / (c) missing rule-06 quiz / (d) missing rule-07 fidelity / (e) missing rule-08 system-thinking (edit turns only) / (f) missing rule-09 triplet (edit turns only) / (g) file-claim contradicted (edit turns only) / (h) missing or overlong TL;DR / (i) rule-12 sync-gate group unmet (edit turns only, opt-in per project) |
+| `SessionStart` | — | [`inject_context.py`](../hooks/scripts/inject_context.py) | Injects the discipline **contract** (`prompts/session-start.md`) plus the project's Imperial Edicts; then runs two failing-open maintenance passes (opt-in auto-GC of old session state, `CLAUDE_ENV_FILE` dedupe). Fires on startup, resume, clear and after every compaction. |
+| `UserPromptSubmit` | — | [`inject_context.py`](../hooks/scripts/inject_context.py) | Injects the short per-turn **reminder** (`prompts/user-prompt.md`) plus the edicts, on every prompt. |
+| `PreToolUse` | `Read\|Edit\|Write` | [`read_guard.py`](../hooks/scripts/read_guard.py) | Records reads and mtime baselines; denies an Edit/Write of an unread existing file (rules 04 + 08), of content carrying an unjustified suppression marker (rule 09), a hardcoded secret (rule 10), a user-home path (rule 11) or a `must` edict match, and the 4th small edit to one file with no systematic rewrite between (rule 09); records the edit-turn signal and the edited-file set for the Stop layers. |
+| `PreToolUse` | `Bash` | [`bash_guard.py`](../hooks/scripts/bash_guard.py) | Denies the bypass patterns and destructive commands (rule 03) and `must` edict matches; processes the read-registration escape hatch. |
+| `Stop` | — | [`stop_guard.py`](../hooks/scripts/stop_guard.py) | The nine-layer done-claim gate. |
 
-#### Why everything in `PreToolUse` (and not split with `PostToolUse`)
+Why four scripts and not one: each has a different responsibility and a
+different failure mode (a lost injection, a corrupted state file, a mis-parsed
+command, a wrong Stop verdict), and collapsing them would chain those behind a
+single `try/except` where a bug in one masks the others. Why everything is in
+`PreToolUse` and nothing in `PostToolUse`: `PostToolUse` does not fire for tool
+calls whose target lies outside the project directory while `PreToolUse` does,
+so recording and gating in the same event is the only way both see the same
+set of files. Recording in Pre is therefore speculative — it happens before
+the tool result exists — which is why only targets that already exist are
+recorded as read (a Read of a not-yet-built artifact must not pre-authorise an
+edit of whatever the build later puts there).
 
-v0.3.1 split recording (PostToolUse) and gating (PreToolUse). v0.3.2 unified
-both into PreToolUse because **`PostToolUse` does not fire for tool calls
-whose `tool_input.file_path` lies outside the current project working
-directory, while `PreToolUse` does**. The mismatch caused false-positive
-denies on out-of-project files (e.g., per-project memory files in
-`~/.claude/projects/<project>/memory/`): the agent would Read X, no record,
-then Edit X → DENY. v0.3.2 records on PreToolUse(Read) and gates on
-PreToolUse(Edit/Write); both share a scope by construction.
+### 2.1 What every hook shares
 
-The trade-off: recording in Pre is speculative (happens before the tool
-result is known). **Only targets that already exist are recorded (v0.25).**
-The earlier reasoning here — that a phantom record for a not-yet-existing
-path was harmless because Edit's `os.path.exists` short-circuit covers it —
-was wrong, and the code now says so explicitly. That short-circuit only
-holds while the file is *still* missing: Read a build artifact before it
-exists (an ordinary workflow), let the build create it, and the stale
-record satisfies `has_read`, so an Edit — or a whole-file Write — lands on
-content the session has never seen, with rule 04 disabled for that path for
-the rest of the session. A missing target still records an mtime baseline,
-which is exactly what Stop layer (g) needs to adjudicate "I created X".
+- **Payload boundary** — [`lib/hookio.py`](../hooks/scripts/lib/hookio.py) reads
+  stdin's binary buffer and decodes it as strict UTF-8 (RFC 8259 §8.1). The
+  text-mode alternative decodes with the host codepage under
+  `surrogateescape`, which on a non-UTF-8 host silently rewrites every
+  non-ASCII character before any detector sees it.
+- **Message catalog** — everything a guard prints comes from
+  [`lib/messages.py`](../hooks/scripts/lib/messages.py) over `messages_en.py`
+  (the skeleton) and `messages_zh.py`, resolved per key for the language
+  [`lib/lang.py`](../hooks/scripts/lib/lang.py) reads from `CC_ENFORCER_LANG`.
+  A missing translation key falls back to English for that key only. What the
+  guards *match* is bilingual regardless of the switch; only what they *say*
+  follows it.
+- **Failing open** — any unhandled exception in a guard is logged to stderr and
+  the call is allowed (exit 0, no output). Unreadable state is treated
+  permissively. A discipline plugin that can brick the agent gets uninstalled,
+  and then it enforces nothing.
+- **Start-up discipline** — every hook is a fresh interpreter, so module-level
+  imports are a per-invocation tax. Each script imports only what its common
+  path uses: the TOML parser loads when a config file exists, `traceback` when
+  a handler runs, the hashing and state modules in `bash_guard` only for a
+  registration, `sync_gate` in `stop_guard` only for layer (i), and
+  `stop_guard`'s regexes compile the first time a layer uses them.
+  [`tests/test_startup_cost.py`](../tests/test_startup_cost.py) pins the
+  property; [`bench_hooks.py`](../hooks/scripts/bench_hooks.py) measures the
+  milliseconds (README §6).
 
-#### Why four scripts (not one)
+### 2.2 `inject_context.py` — the two injections
 
-Four scripts are registered as hooks (`inject_context.py`, `read_guard.py`,
-`bash_guard.py`, `stop_guard.py` — the last since v0.6.0). Each has a
-different responsibility and a different failure mode:
-- `inject_context.py` never blocks: always exit 0, and stdout carries
-  nothing but `additionalContext`. It is *not* disk-read-only, though —
-  on `SessionStart` it also runs two maintenance passes: opt-in auto-GC
-  (deletes expired session files, rewrites the `_auto_gc.json` marker)
-  and `envfile.maybe_dedupe()` (rewrites the harness-owned
-  `CLAUDE_ENV_FILE`, v0.34). Both run after the payload is assembled and
-  both fail open, so their failure mode is a skipped maintenance pass,
-  never a lost injection.
-- `read_guard.py` owns per-session disk state, with both recording and
-  gating in PreToolUse (Read/Write/Edit). Its failure mode is state-file
-  corruption.
-- `bash_guard.py` inspects commands and also mutates session state (the
-  `register_read` escape hatch) and reads `edicts.toml` off disk. Since
-  v0.26 its two structural decisions — force-push detection and
-  register-command parsing — go through the `lib/shellcmd` parse model
-  rather than regexes over the raw command string, so its failure mode is
-  a mis-parse, not just a regex bug.
-- `stop_guard.py` is read-only with respect to the turn's work but owns the
-  Stop decision tree and the one-shot block state.
-
-Collapsing them into one script would chain independent failure modes
-behind a single try/except — a bug in any one would mask the others. Keeping
-them separate also lets each script load only the imports it actually needs.
-
-#### Soft-layer output contract (`inject_context.py`)
-
-Always exit 0. Emits:
+`--event SessionStart|UserPromptSubmit` selects the prompt file; the script
+never blocks and always exits 0, emitting
 
 ```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "SessionStart",
-    "additionalContext": "<contents of prompts/session-start.md>"
-  }
-}
+{"hookSpecificOutput": {"hookEventName": "<event>", "additionalContext": "<text>"}}
 ```
 
-Never blocks, and nothing but that envelope reaches stdout. It is not
-inject-only on disk, however: `SessionStart` additionally runs the opt-in
-auto-GC (prunes session state, rewrites `_auto_gc.json` — see
-[`gc_state.py`](../hooks/scripts/gc_state.py)) and
-[`lib/envfile.py`](../hooks/scripts/lib/envfile.py)'s `maybe_dedupe()`,
-which collapses duplicate `export` lines in the harness's
-`CLAUDE_ENV_FILE` (v0.34). Both are side-channel maintenance — invoked
-after the context is built, failing-open, diagnostics on stderr only —
-so neither can alter or suppress the injected payload.
+**Two tiers.** `session-start.md` (~6.8k characters) is the authoritative
+contract: the twelve rules in one line each, the physical-enforcement table,
+the mandatory reply schema. Because `SessionStart` fires again after every
+compaction, the contract survives compaction by construction. The per-turn
+`user-prompt.md` (~2.6k characters) is a reminder that names every hard gate,
+every Stop layer and every schema field name, and nothing else — it is re-sent
+on every prompt, so every character in it is paid on every turn.
+[`tests/test_inject_context.py`](../tests/test_inject_context.py) derives the
+tokens the reminder must carry from the guards themselves, so a gate cannot
+quietly fall out of it.
 
-#### Hard-layer output contract (`read_guard.py`)
+**Language.** English at `prompts/` is the skeleton; `CC_ENFORCER_LANG=<code>`
+reads `prompts/<code>/` first and falls back to the skeleton per file, with a
+stderr note. Any code is accepted; an unregistered one degrades to English.
 
-`PreToolUse` (record): on Read/Write, `state_lib.add_read` is called and the
-script exits 0 silently with state written to disk.
+**The budget.** Claude Code caps hook output at `OUTPUT_CAP` = 10,000
+characters and replaces anything longer with a file path plus a short
+preview, so an over-cap contract is a contract the agent reads the first two
+kilobytes of. `build_context` therefore leads with a self-locating header (the
+plugin root, named once, and where to Read the full text) and splits the
+payload asymmetrically: the contract is protected whole; the edict table —
+the only unbounded part — yields, clipped at whole-row boundaries with a
+notice of how many edicts were elided (a truncated row still reads as a
+complete instruction, and a silent drop is a session governed by rules it was
+never shown). The realistic-install test holds a 120-character root plus
+three edicts under the cap for all four prompts.
 
-`PreToolUse` (allow): exit 0 silently. (Allow is the default with no output.)
+**Edicts.** Both injections append the project's Imperial Edicts
+([`EDICTS.md`](./EDICTS.md)), re-read from disk on every event so an edict
+added mid-session appears on the next prompt. The per-turn table omits the
+intro and footer sentences the contract already carried.
 
-`PreToolUse` (deny): exit 0, emits
+**Maintenance passes** (`SessionStart` only, after the payload is built, both
+failing open): auto-GC prunes session-state files older than
+`CC_ENFORCER_AUTO_GC_DAYS` days, at most once per 24 h (marker file
+`AUTO_GC_MARKER` in the state directory), never the live session's own file;
+`lib/envfile.py` collapses duplicate `export` lines in `CLAUDE_ENV_FILE`,
+keeping the last occurrence per name, and refuses the whole pass on any line
+shape it cannot represent byte-identically.
+
+### 2.3 `read_guard.py` — the write gate
+
+**On Read:** record the path (only if it exists) and its mtime baseline (always
+— "did not exist at baseline" is what layer (g) needs to judge "I created X").
+Allow silently.
+
+**On Edit / Write:**
+
+1. Load the edicts (hot reload; before any check, so a mis-encoded
+   `edicts.toml` reports on every write, denied or not).
+2. Edit of a path that does not exist → allow (Claude Code rejects it itself).
+   Otherwise record the baseline.
+3. Target exists but was never Read this session → **DENY** (rules 04 + 08).
+   The deny text carries its own recovery: Read the file, or — when the
+   harness served the Read from its cache without firing the hook — register
+   it through the SHA-256 hatch (§2.4).
+4. **Content pipeline** over `new_string` / `content`, first hit denies:
+   - suppression markers without an adjacent rationale (`PATCH_MARKERS`:
+     `# noqa`, `# type: ignore`, `// @ts-ignore`, `// @ts-expect-error`,
+     `// eslint-disable[-next-line|-line]`, `time.sleep(…)` with a
+     race/wait/workaround comment) and a bare `try: … except: pass` (found by
+     a scanner that tracks nested `try` blocks and skips comment lines);
+   - a hardcoded secret (rule 10): a secret-named identifier assigned a ≥ 8
+     character literal (bare or quoted key), a PEM private-key header, an AWS
+     `AKIA` access key, a provider token (`ghp_` / `xox` / `AIza`), or
+     credentials in a URL — obvious placeholders (`example`, `changeme`,
+     `<…>`, `your-`, `os.environ` / `getenv` / `process.env` reads) are skipped;
+   - a machine-specific path (rule 11): `C:\Users\…`, `/home/…`, `/Users/…`
+     (raw or escaped separators), `$HOME`, `%USERPROFILE%`, a quoted `~/…`;
+   - a `must` edict's `deny_edit` regex.
+   The **rationale hatch** is how "non-essential" is operationalised: a
+   why-comment on the line or an adjacent one, carrying a rationale token
+   (`because` / `因为` / `rationale` / `intentional` / `see issue` … and, for
+   rules 10 and 11, `essential` / `example` / `fixture` / `placeholder` /
+   `sample` / `test data`) clears the marker. "Comment" is decided by
+   [`lib/srclex.py`](../hooks/scripts/lib/srclex.py) — a `#` inside a URL is
+   not one; a `/* … */` block or an own-line docstring is — and an inline
+   reason must be substantive (a leading `TODO` / `FIXME` / `HACK` is a
+   deferral, not a reason). Rules 10 and 11 skip prose documents (`.md`,
+   `.rst`, `.txt`, `.adoc`) and lockfiles; rule 09 matches only the bare marker
+   form there. Neither rule 10 nor 11 has a Stop layer: content detectors are
+   `PreToolUse`-only, so an already-denied write is never judged twice.
+5. **Rolling-patch frequency** (rule 09). [`lib/editscale.py`](../hooks/scripts/lib/editscale.py)
+   classifies the change against the file it edits: *small* is under 200
+   characters and at most 10 lines; *systematic* is ≥ 1500 characters, ≥ 50
+   lines, or ≥ 30 % of the file, and resets the per-file counter; anything
+   between neither counts nor resets. A net reduction and a bookkeeping edit
+   (only version / ISO-date literals differ; bare integers too in prose) are
+   never counted. The `ROLLING_PATCH_THRESHOLD`th small edit (4) with no
+   systematic rewrite since → **DENY**; a denied edit does not increment.
+   The deny quotes the file's own coverage bar, computed from disk.
+6. All clear → record the read (Write), set the edit-turn flag, add the path
+   to `edited_files`. Allow silently.
+
+Deny output, both guards:
 
 ```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": "cc-enforcer · rule 04 violation ..."
-  }
-}
+{"hookSpecificOutput": {"hookEventName": "PreToolUse",
+  "permissionDecision": "deny", "permissionDecisionReason": "cc-enforcer · …"}}
 ```
 
-The reason text tells the agent precisely how to recover (Read first, then retry).
+### 2.4 `bash_guard.py` — command discipline
 
-#### Per-session state storage
+The command is tokenised once by [`lib/shellcmd.py`](../hooks/scripts/lib/shellcmd.py)
+into shell segments (`&&`, `||`, `;`, `|`, newlines, `$(…)`, backticks,
+subshells; it recurses into a shell's `-c` operand) and every check works on
+argv, so `echo git commit --no-verify` executes nothing and is allowed while
+`$(git push --force)` really runs and is denied. Checks run in this order, and
+all of them before the registration step, so a command that is going to be
+denied never mutates state:
 
-The guard uses **session_id** from the hook payload as the state key. Storage
-location resolves in this order:
-
-1. `${CLAUDE_PLUGIN_DATA}/sessions/<sid>.json` — preferred, set by Claude Code
-   for plugin hooks.
-2. `${CLAUDE_PROJECT_DIR}/.claude/local/cc-enforcer/sessions/<sid>.json` —
-   per-project fallback.
-3. `~/.claude/local/cc-enforcer/sessions/<sid>.json` — final fallback.
-
-State files are git-ignored (`.gitignore:27` — `.claude/local/`, which
-covers fallback 2; fallbacks 1 and 3 live outside the repo). Paths within state are
-canonicalised via `os.path.realpath` + `os.path.normcase` so case-insensitive
-filesystems (Windows) compare correctly.
-
-**Concurrency (v0.23, completed v0.24)**: every hook invocation is a separate
-OS process, and Claude Code fires parallel tool calls as concurrent hook
-subprocesses sharing one session file. Every state *mutation* holds a
-per-session cross-process advisory lock (`_session_lock`: `msvcrt.locking` on
-Windows / `fcntl.flock` on POSIX, on a sibling `<sid>.json.lock` file) across
-its load→mutate→save cycle, and `save()` is atomic (unique temp file +
-`os.replace`) so readers can never observe a torn JSON. Measured before the
-v0.23 fix: 10 parallel `PreToolUse(Read)` hooks lost 2-3 of 10 recorded paths
-per round — the visible symptom was a false rule-04 DENY immediately after the
-file WAS read. **v0.24 closed the other half**: the v0.23 read accessors were
-lock-free, and on Windows a writer's `os.replace` fails with `PermissionError`
-while ANY process holds the target open (CPython's `open()` does not request
-`FILE_SHARE_DELETE`) — the hooks' own readers collided with their own writers
-(measured 300/300 lost saves under tight-loop readers; live state dirs carried
-orphan `<sid>.json.<pid>.tmp` debris). Read accessors now route through the
-same lock (`_load_shared`), `save()` retries the replace with a short backoff
-against non-cooperating external readers (antivirus / indexers) and unlinks
-its temp file if it ever gives up, and `load()` retries once on a transient
-`OSError` (a bare degrade returns an empty record, which a locked mutator
-would save back — full session amnesia). Lock acquisition failure still
-degrades to unlocked behavior with a stderr diagnostic (failing-open, never a
-bricked agent). `gc_state.py` prunes `*.json` session files and (v0.24)
-sweeps day-old orphan `*.tmp` files; lock files are never deleted out from
-under a holder.
-
-#### Failing-open
-
-Any unhandled exception in `read_guard.py` is caught, logged to stderr, and
-the script exits 0 (allow). A bug in the guard cannot be permitted to brick
-the agent — discipline enforcement must never become an obstacle to actual work.
-
-#### `Stop` guard (rule 01 + 06 + 07 + 08 + 09 + 12 + TL;DR enforcement, v0.6.0 → v0.7.0 → v0.8.0 → v0.11.0 → v0.16.0 → v0.20.0 → v0.23.0)
-
-`stop_guard.py` (event `Stop`, no matcher — Stop fires unconditionally per
-Claude Code spec) inspects `payload.assistant_message` (or falls back to
-the last text-bearing assistant entry in `payload.transcript_path`, read
-from the file's tail in growing windows — v0.39.2, after a 2.5 GB
-transcript read whole turned every Stop into a 12.7 GB process).
-
-**Decision tree (v0.11.0):**
-
-| Step | Condition | Action |
-|------|-----------|--------|
-| 0 | One-shot guard window (`turn_count` ∈ `[last_blocked + 1, last_blocked + 3]`; **v0.23**: production Stop payloads carry no turn_count — verified live — so a monotonic turn number is synthesized from the per-session `stop_counter`, which restores the grace arithmetic in production). **v0.24**: the message is now extracted *before* this guard, and a grace-window reply carrying a sync marker records its layer-(i) group acknowledgement — but only when the block being recovered from was itself at layer (i) (`last_blocked_layer`), so a reply merely quoting "sync-check" while recovering from an unrelated layer cannot ack anything. The block→recover-with-`同步核对` flow used to lose the ack entirely, so the answered group re-blocked after the grace expired | Allow |
-| 1 | No done-claim regex matched | Allow |
-| 2 | Hedge regex within 50 chars of done-claim (rule 01) | **Block** (layer (b), `_RECOVERY_B`) |
-| 3 | No evidence regex matched (v0.6.0 base) | **Block** (layer (a), `_RECOVERY_A`) |
-| 4 | No convergence marker AND fewer than 2 self-quiz questions (rule 06 deep) | **Block** (layer (c), `_RECOVERY_C`) |
-| 5 | No fidelity marker AND fewer than 2 of 3 fidelity questions (rule 07) | **Block** (layer (d), `_RECOVERY_D`) |
-| 6 | edit turn (`edited_since_last_stop` flag, or `last_edit_turn == turn_count` when supplied) AND no rule-08 marker AND fewer than 3 of 6 rule-02 keywords (rule 08, **v0.11**; edit signal fixed for production in **v0.23**) | **Block** (layer (e)) |
-| 7 | edit turn AND no rule-09 marker AND triplet (root-cause + impact + solution) incomplete (rule 09, **v0.11**) | **Block** (layer (f)) |
-| 8 | edit turn AND a file-edit/create claim is **definitively contradicted** by the on-disk mtime baseline (rule 01 + 06, **v0.16**; `CC_ENFORCER_DISABLE_LAYER_G=1` to skip) | **Block** (layer (g)) |
-| 9 | No TL;DR marker (`tldr:` / `大白话` / `一句话总结` / `TL;DR`) — fires on **every** done-claim turn, not just edit turns (**v0.20**) | **Block** (layer (h)) |
-| 10 | A tldr item wider than `TLDR_MAX_ITEM_COLUMNS` (160 **display columns**, **v0.35** — a CJK character costs 2, so ≈ 80 of them; ASCII is unchanged at 160) — one sentence per item, cause + action + outcome; several things → one short line each (**v0.23**) | **Block** (layer (h), "overlong" note + dedicated recovery) |
-| 11 | edit turn AND a sync-gate group's `when` glob matched an edited file with its `require` side unsatisfied (per the group's `mode`: any-of by default, all-of for lock-step invariants) AND the group is not in the session's `sync_acked_groups` AND no sync marker (`同步核对` / `sync-check` / `rule 12` / `全库同步` / `连带核对` / `repo-wide sync` — deliberately NOT `sync-gate`, which is the config file's name, not a claim) in the reply (rule 12, **v0.23**; per-project opt-in via `.claude/cc-enforcer/sync-gate.toml` — no config, never fires). A marker escape records the acknowledged groups for the session, so one explicit answer per group suffices. **v0.27**: the marker settles only groups the session has actually been SHOWN (`last_blocked_groups`) — the primary path used to ack every pending group while the grace path acked only the presented set, and that inconsistency was itself the bypass (outlast the grace window, reach the looser path). A group is therefore named by one block, then settled by the next reply's marker: one *informed* answer per group. | **Block** (layer (i)) |
-| 12 | All gates passed | Allow |
-
-**Done-claim patterns**: `已解决` / `已修复` / `已完成` / `完成了` / `完工` /
-`搞定` / `[修改弄搞]好了` / `\bfixed\b` / `\bdone\b` / `\bcompleted\b` /
-`\bresolved\b` / `\bimplemented\b` / `\bfinished\b` (v0.25.1) /
-`(is|are|was|were) complete` / `<noun> complete` / `ready to ship`
-(v0.26) / `all set` / `should work now` / `that should do it`. The list
-is exhaustive on purpose: `_has_done_claim` gates **all nine layers**, so
-a completion phrased outside it skips the entire stack — which is why
-v0.25.1 and v0.26 each had to widen it after finding a live phrasing that
-matched nothing. Note that `should work now` and `that should do it` are
-**done**-claims, not hedges; bare `should` is excluded from the hedge set
-just below, and the two lists do not overlap.
-
-**Evidence patterns**: shell-prompt lines (`$ ` / `> `), `Ran N tests`,
-`N passed/failed`, `pytest` / `unittest`, `重触发` / `边界用例` / `反向用例`
-/ `收敛`, `verified` / `re-?ran` / `validated`, fenced code block
-of ≥20 chars output.
-
-**v0.7.0 hedge patterns** (must be within 50 chars of a done-claim, in
-either order, to fire): `我[记觉]得` / `我相信` / `可能就` / `应该是` /
-`大概(是)?` / `I think` / `I believe` / `I guess` / `maybe` / `probably`
-/ `kinda` / `sort of`. Generic non-first-person hedges like `通常` or
-`should` are intentionally **excluded** — they appear too often in
-legitimate technical writing far from the completion claim.
-
-**v0.7.0 convergence markers** (single match suffices to pass the
-self-quiz gate): `rule 06` / `自答` / `收敛` / `convergence` /
-`self-quiz`, plus the rule-06-specific check names `重触发` / `边界用例`
-/ `反向用例`.
-
-**v0.7.0 self-quiz patterns** (≥ 2 of 4 must match, in either Chinese
-or English):
-
-| # | Question | Patterns |
-|---|----------|----------|
-| 1 | Really solved? | `真.*?解决` / `really.*?(?:solv\|fix)` |
-| 2 | Better solution? | `更好.*?(?:方案\|方法\|做法)` / `better.*?(?:solut\|approach\|way)` |
-| 3 | Unverified parts? | `(?:哪些\|哪里).*?(?:没验\|未验)` / `unverif` |
-| 4 | Meaningful verification? | `验证.*?(?:合理\|是否充分)` / `verification.*?(?:meaning\|reasonab)` |
-
-**v0.8.0 fidelity markers** (rule 07; single match suffices to pass
-the fidelity gate): `rule 07` / `任务忠实` / `请求覆盖` / `原始请求` /
-`无遗漏` / `无降级` / `未降级` / `未遗漏` / `无超范围` / `未超范围` /
-`task fidelity` / `request coverage` / `request fidelity` /
-`no degradation` / `no omission` / `no scope creep` / `covered all` /
-`all requested`, plus the `[✅⚠️❌] … (完成|done|完工)` checklist-row
-pattern (the agent enumerated original-request items with check
-marks).
-
-**v0.8.0 fidelity self-quiz patterns** (rule 07; ≥ 2 of 3 must match,
-in either Chinese or English):
-
-| # | Question | Patterns |
-|---|----------|----------|
-| 1 | Coverage — did I do every sub-item? | `(?:用户\|原始).*?(?:请求\|要求).*?(?:拆\|列\|包含\|分成\|项\|子项)` / `decompos.*?request` / `sub-?item` / `coverage.*?(?:check\|complete)` |
-| 2 | Standard — did each modifier word land as hard action? | `(?:强制\|必须\|完整\|严格\|全面\|所有).*?(?:落实\|硬动作\|硬证据\|拦截\|断言\|实现\|生效)` / `(?:mandator\|strict\|comprehensive\|all\|every\|hard).*?(?:enforced\|verifi\|hook\|assert\|land)` |
-| 3 | Fidelity — concept-swap / scope creep / buried TODO? | `偷换\|降级\|超范围\|额外的?(?:改\|修)\|遗漏\|裁剪` / `concept.?swap\|degrad\|scope.?creep\|omission\|trim\|drive-?by` |
-
-Layer (d) fires only when (a)(b)(c) all pass, so the agent has
-already shown it both has evidence and engaged with the rule-06
-self-quiz; the fidelity layer adds the orthogonal "did you deliver
-everything the user asked for?" check before allowing the Stop.
-
-**v0.11.0 rule-08 closing markers** (layer (e); single match
-suffices to pass the gate): `rule 08` / `改前必读` / `写前必想` /
-`read-before-edit` / `think-before-write` / `系统式自答`.
-
-**v0.11.0 rule-02 systematic-thinking keywords** (layer (e)
-fallback; ≥ 3 of 6 must match):
-
-| # | Keyword (CN / EN) |
-|---|-------------------|
-| 1 | `架构` / `architecture` / `architectural` |
-| 2 | `职责` / `responsibility` |
-| 3 | `根源` / `根因` / `root-cause` |
-| 4 | `方案` / `solution` / `approach` |
-| 5 | `连带` / `下游` / `影响范围` / `downstream` / `impact` / `connected` |
-| 6 | `风险` / `不变量` / `invariant` / `risk` |
-
-**v0.11.0 rule-09 closing markers** (layer (f); single match
-suffices to pass the gate): `rule 09` / `系统式修改` / `打补丁` /
-`systematic modification` / `patch-style` / `non-patch` / `反补丁`.
-
-**v0.11.0 rule-09 triplet keywords** (layer (f) fallback; **all
-three** must match):
-
-| # | Triplet axis (CN / EN) |
-|---|-------------------------|
-| 1 | `根源` / `根因` / `root-cause` |
-| 2 | `连带` / `影响范围` / `impact` / `blast-radius` / `downstream` |
-| 3 | `方案` / `solution` / `approach` / `alternative` |
-
-**v0.20.0 TL;DR markers** (layer (h); single match suffices to pass
-the gate): `tldr:` (the canonical YAML schema field) / `大白话` /
-`一句话总结` / `一句总结` / `TL;DR`. Unlike (e)/(f)/(g), layer (h)
-fires on **every** done-claim turn — a status report or an answer
-benefits from a one-line takeaway just as much as a code edit. It is the
-final gate (reached only after all discipline checks pass) and is
-enforced as a closing readability convention, deliberately **not**
-promoted to a tenth numbered rule (which would require the full
-`rules/*.md` + `rules/zh/` + `00-index` + docs fan-out). The v0.20
-canonical reply schema is a YAML block whose field names
-(`before` / `edits` / `convergence` / `fidelity` / `closing` /
-`sync-check` / `tldr`, and their Chinese equivalents) ARE the layer
-markers above — so a
-schema-conformant reply passes (a)-(h) with no detector changes.
-
-**v0.31.1 — `sync-check` / `同步核对` joins the schema.** Rule 12 shipped in
-v0.23, three releases after the v0.20 schema was fixed, and its
-acknowledgement was the one closing obligation with no field to write it in:
-free prose the agent had to remember. It is now a field like the rest, and —
-per the v0.20 design — the field name IS the `SYNC_MARKERS` pattern, so no
-detector changed. **It does not weaken layer (i)**, verified by probe rather
-than by reading: since v0.27 a marker settles only groups a previous block
-actually NAMED, so a first violation still blocks and names its group, and the
-schema field is where the answer to *that* group goes on the next turn. A
-mandatory field does invite a boilerplate answer, though, and that half stayed
-open until v0.32: a placeholder value now counts as absent, and a marker the
-agent merely quoted is not the agent's claim.
-**v0.32 closes the gap v0.31.1 recorded.** `_has_sync_marker` was
-`any(pattern.search(text))` — presence only — so `sync-check: n/a`, and a
-marker the agent merely *quoted*, both settled a named group. It now applies
-the two tests layer (h) already applies to `tldr`, through the same `lib/mdctx`
-model: **attribution** (a marker inside a non-canonical fence or a blockquote
-is illustrative, not a claim) and **substance** (the value must carry content,
-on its own line or the next non-blank one; `_SYNC_NON_ANSWERS` treats a bare
-placeholder as absent, and a non-answer cannot borrow the following line).
-Deliberate strictness increase, decided by the user on 2026-08-17. **The limit
-is pinned by its own test**: vacuous *prose* (`sync-check: checked it`) is not
-detected and is not claimed to be — over-reaching would refuse honest reports,
-which is the worse error.
-
-**v0.20.0 block-reason plain-language line**: every block reason now appends a
-one-line plain-language takeaway (`大白话: ...`) before the one-shot
-footer, so cc-enforcer's own output is symmetric with the layer-(h)
-requirement it imposes on the agent.
-
-**v0.23.0 layer (h) length cap** (**v0.35** — now measured in display
-columns): beyond mere presence, each tldr item must stay within
-`TLDR_MAX_ITEM_COLUMNS` (160) display columns, where an East-Asian
-wide character costs 2 and a combining mark 0. The constant was
-`TLDR_MAX_ITEM_CHARS` and counted code points until v0.35, which made
-one number mean two things across a bilingual contract — the comment
-above it conceded as much ("a full English sentence fits; a Chinese
-sentence is far shorter"), i.e. the zh side enforced a bound about
-twice as loose while the whole point of the layer is that a TL;DR is
-one sentence. ASCII behaviour is unchanged. Extraction is
-line-based and conservative (only lines attributable to a tldr marker —
-the marker line's value plus more-indented continuation / `- ` list
-lines — are measured; anything ambiguous is not measured, failing open).
-The block reuses layer (h) with an "overlong" table note and its own
-recovery text (`_RECOVERY_H_LONG`).
-
-**v0.25.1 layer (h) presence must mean content**: a bare `tldr:`, a
-`tldr: ""`, or a blockquoted `> tldr: …` (quoting someone else) used to
-satisfy the presence half outright, while the length half then measured
-nothing — so the emptiest possible summary passed both. `_has_tldr` now
-requires the marker to introduce actual text, on its own line or on the
-next non-blank one, and ignores blockquoted markers.
-
-**v0.25.1 `_has_done_claim` is the gate on all nine layers.** Every layer
-is downstream of it, so a completion phrased outside `DONE_PATTERNS` did
-not skip one check — stop_guard returned immediately and cleared the edit
-flag on the way out. `已完成` / `Implemented` / `Finished` /
-`is/are complete` were all silently exempt and are now covered. The
-converse was also true: a bare keyword search read `Not done; tests
-failed.` and `This is not fixed` as completions (and unbounded `all set`
-matched inside "Not all settings"), so an honest report of failure could
-be blocked. Matches preceded by a negator are now skipped and the scan
-continues, so a later unnegated claim still counts. Evidence detection
-(layer (a)) also learned the Windows prompt shapes `PS C:\repo>` and
-`C:\repo>`, which matched none of the POSIX-only patterns — a Windows
-user pasting a genuine transcript was told they had produced none.
-
-**v0.23.0 layer (i) — rule 12 repo-wide sync gate**: `read_guard.py`
-records every ACCEPTED Edit / Write path into the session's
-`edited_files` set; at Stop, `lib/sync_gate.py` loads the project's
-`.claude/cc-enforcer/sync-gate.toml` (resolution: payload cwd →
-`CLAUDE_PROJECT_DIR` → process cwd with a project-root marker; no
-home-level fallback — groups are inherently per-repo) and evaluates each
-`[[groups]]` entry: `when` globs matched by an edited project-relative
-path with the `require` side unsatisfied (any-of by default;
-`mode = "all"` demands every require glob be matched) → violation. The
-reply passes anyway if it carries a sync marker (SYNC_MARKERS), making
-"checked, no change needed" an explicit, legitimate outcome — and the
-escaped groups are persisted as `sync_acked_groups`, so the cumulative
-edited-file set cannot re-block an already-answered group on later
-unrelated edits. fnmatch semantics: `*` crosses path separators;
-matching is normcased. No config → the layer never fires (per-project
-opt-in). Loader and evaluator are failing-open.
-
-**v0.25.1 — the grace-window ack is scoped to the groups the block
-presented.** A recovery turn is still an editing turn: if it touched
-files violating a *different* group, that group became pending only
-after the block, was never shown to the agent, and was never answered —
-yet `_ack_pending_sync_groups` re-derived "everything pending now" and
-silenced it for the rest of the session. The layer-(i) block now records
-its presented group names (`last_blocked_groups`), and the ack
-intersects with that set (falling back to the pending set when no list
-was recorded, i.e. a block from before this field existed). The related
-question of whether the ack should also honour recoveries from layers
-other than (i) is a **contract** question about enforcement strictness,
-reaffirmed as "stay strict" by the user on 2026-08-10.
-
-**Why layers (e)+(f) are scoped to edit turns**: a pure analysis /
-answer turn should not be forced to surface think-before-write or
-root-cause/impact/solution markers — there was nothing modified for
-those to apply to. **Edit-turn signal (reworked in v0.23)**: the
-original v0.11 design stamped `last_edit_turn = turn_count` and
-compared it at Stop — but a live-state E2E audit found production hook
-payloads carry NO `turn_count` (a real session with 27 recorded edits
-had no `last_edit_turn` key at all), so layers (e)/(f)/(g)/(i) had
-never fired outside the test suite. `read_guard.py` now always sets an
-`edited_since_last_stop` flag on every accepted Edit / Write;
-`did_edit_this_turn` honors the flag OR the exact turn match (test
-harnesses / future payloads). stop_guard clears the flag on every
-ALLOWED Stop (a turn boundary) and keeps it on blocks — the recovery
-reply is the same logical turn. The one-shot guard still applies, via
-the synthesized `stop_counter` turn number when the payload has none.
-
-**Why detection is heuristic and lightweight**: same rationale as
-layers (c)(d). A careful agent who genuinely did the rule-08/09
-work will naturally use these keywords in their own phrasing;
-demanding a verbatim formula would false-positive on legitimate
-prose. The single-marker escape (`rule 08` / `rule 09`) lets an
-agent who used non-keyword phrasing still flag they did the work.
-The one-shot guard caps false-positive cost at exactly 1 corrective
-turn per block.
-
-**One-shot guard**: `state_lib.record_stop_block(session_id, turn_count)`
-on every block; `state_lib.was_just_blocked(session_id, turn_count)`
-returns True for `turn_count ∈ [last + 1, last + 3]` so the agent has a
-multi-turn grace window to recover. After the grace expires, fresh
-blocks resume.
-
-**Block output is asymmetric**: Stop hook uses **top-level**
-`{"decision": "block", "reason": ...}`, NOT the `hookSpecificOutput`
-envelope used by `PreToolUse`. Verified against
-https://code.claude.com/docs/en/hooks.md.
-
-**Why heuristic first, file-claim verification later**: deep "I edited X"
-→ `git diff` / mtime verification was the original roadmap idea. v0.6.0
-deliberately shipped the lighter heuristic — natural-language file-path
-extraction is fragile (high false positives), while done-claim-without-
-evidence is robust (a careful agent always cites evidence per rule 05,
-so this only fires on actual laziness). v0.7.0 deepened the rule-06
-side (hedge + self-quiz); v0.8.0 added the rule-07 fidelity layer; the
-file-claim verification itself landed as layer (g) in v0.16 with the
-conservative mtime-baseline design described above.
-
-#### `Edit` / `Write` patch-style content blocking (v0.11.0)
-
-`read_guard.py` gains a second responsibility beyond read-before-edit:
-the `new_string` (Edit) or `content` (Write) is scanned for **patch-
-style markers** — `try / except: pass`, `# noqa`, `# type: ignore`,
-`// @ts-ignore`, `// @ts-expect-error`, `// eslint-disable[-next-
-line]`, `time.sleep(...) # race/wait/workaround` — and DENY-ed when
-present **without an adjacent rationale comment** (the line itself or
-±1 line must contain one of: `because`, `原因`, `why`, `正当`,
-`rationale`, `see issue/pr/comment/ticket`, `intentional`,
-`deliberate`, `third-party`, `per spec/rfc/standard`).
-
-| Pattern | Why |
-|---|---|
-| `try:\n …\nexcept …:\npass` (multi-line, bare) | Silent exception swallow (rule 03 + 09) |
-| `# noqa` without rationale | Lint suppression without justification (rule 03 + 09) |
-| `# type: ignore` without rationale | Type-checker suppression (rule 03 + 09) |
-| `// @ts-ignore` / `// @ts-expect-error` without rationale | TS suppression (rule 03 + 09) |
-| `// eslint-disable[-next-line\|-line]` without rationale | Lint suppression (rule 03 + 09) |
-| `time.sleep(...) # race/wait/workaround` | Sleep masking a race (rule 03 + 09) |
-
-This is the **physical-enforcement** half of rule 09. The
-soft-layer half (the `rules/09-systematic-modification.md`
-discipline + Stop layer (f) closing check) covers the cases the
-regex set cannot catch (rolling patches, loosened assertions, etc.).
-
-#### `Edit` / `Write` hardcoding + path-dependency blocking (v0.22.0)
-
-A third and fourth content responsibility of `read_guard.py`, added
-alongside the rule-09 patch-style scan and sharing its mechanism
-(`new_string` / `content` scan → DENY on first hit, with a why-comment
-escape hatch). They physically enforce rule 10 (no non-essential
-hardcoding) and rule 11 (no non-essential path dependency):
-
-| Detector (function) | Flags (high-confidence only) | Rule |
+| Check | Denies | Rule |
 |---|---|---|
-| `_find_hardcoded_secret` | assignment to a secret-named identifier (`password` / `api_key` / `secret` / `private_key` / …) with a ≥ 8-char string literal, bare **or quoted** key; PEM `-----BEGIN … PRIVATE KEY-----`; AWS `AKIA…` access-key; provider-issued token literals (`ghp_…` / `xox…` / `AIza…`, v0.25.1); credentials embedded in a connection URL (`://user:pass@`) | 10 |
-| `_find_path_dependency` | machine-specific **user-home** absolute paths (`C:\Users\…` / `/home/…` / `/Users/…`) with **raw or escaped** separators (v0.25.1), plus `$HOME` / `%USERPROFILE%` / quoted `~/…` inside a string literal | 11 |
+| `STATIC_PATTERNS` | `--no-verify` · `--no-gpg-sign` · `chmod 777` (`-R`, `0777` too) · `git rebase --skip` · `--break-system-packages` · `rm -rf` on root / `$HOME` / `~` | 03 |
+| force-push detector | a `git push` segment (git global options resolved, `git.exe` too) carrying `--force` / `--force=…` / `--mirror` / a `+refspec` / a short cluster containing `f` (`-f`, `-fu`) — **not** `--force-with-lease` | 03 |
+| edicts | a `must` edict's `deny_bash` regex | edict |
+| register hatch | a `register_read.py` invocation that fails its checks (see below) | 04 |
 
-Two scoping refinements keep false positives low, honouring the repo's
-prefer-false-negatives detector philosophy:
+The deny names the pattern and how to address the real problem instead; an
+authorised bypass is still denied, and the agent is told to surface the deny
+so the user runs the command themselves.
 
-- **Escape hatch = how "non-essential" is operationalized.** A flagged
-  literal / path *with* an adjacent rationale comment (the extended
-  `HARDCODE_RATIONALE_TOKENS`: the rule-09 tokens plus `essential` /
-  `必须` / `必需` / `example` / `fixture` / `placeholder` / `占位` /
-  `sample` / `test data`) is allowed; obvious placeholders (`example`,
-  `changeme`, `xxxx`, `<…>`, `your-`, and `os.environ` / `getenv` /
-  `process.env` reads) are skipped by construction. "Essential"
-  hardcoding declares itself; lazy hardcoding does not.
-  The rule-09 base set gained the Chinese "because"/"deliberately" forms
-  in v0.26 (`因为` / `之所以` / `理由` / `故意` / `刻意` / `有意` / `特意`)
-  alongside `reason` / `tracking` / `vendor` — only the noun `原因` had
-  been listed, so the most natural Chinese spelling was rejected while
-  English `because` passed, in a Chinese-primary repo. The token must sit
-  in **comment text** (v0.25.1) and "comment" is decided by the
-  [`lib/srclex`](../hooks/scripts/lib/srclex.py) lexer (v0.26), so a `#`
-  inside a URL is not one while `/* … */` blocks and own-line docstrings
-  are.
-- **Prose-doc + lockfile targets are exempt** (`_is_scannable_target`
-  returns False for `.md` / `.markdown` / `.rst` / `.txt` / `.adoc` /
-  `.asciidoc` and `*.lock` / `package-lock.json` / `yarn.lock` /
-  `poetry.lock` / `Cargo.lock`). The user framed this as "after the **code** is written"
-  detection, and this repo's own docs are full of example paths and
-  values — scanning them would self-trip. The rule-09 patch check keeps
-  its all-files behaviour; only these two new detectors are gated.
-  v0.24 refinements: `requirements*.txt` / `constraints*.txt` stay
-  scannable despite `.txt` (dependency manifests are a real
-  credential-leak vector); a pure-alpha CamelCase secret *value*
-  (`password: "SecretStr"` — a Python forward-reference annotation) is
-  skipped; and the POSIX `/home/…` pattern rejects matches glued to a
-  hostname (`https://host/home/alice/…` is a route, not a path).
+**Read-cache escape hatch.** Claude Code may serve a repeated Read from its
+result cache without firing the hook, which would leave a later Edit falsely
+denied. The recovery is `python register_read.py --file ABS --hash SHA256`,
+and the hook is the authority: the invocation must be the *entire* command (a
+chained or substituted form earns no credit while the stub still prints
+`register_read: ok`), the script must be in command position (`argv[0]` or a
+Python interpreter's script operand — never a `-c` operand), the path must be
+absolute and exist, the hash must be 64 hex characters, and `bash_guard`
+recomputes the SHA-256 from disk and registers only on a match. An agent that
+never opened the file cannot produce the digest. If the registration cannot be
+persisted, the command is denied rather than reported as done. `--file X` and
+`--file=X` are both accepted.
 
-  **v0.25.1 corrections to the two clauses above.** The CamelCase relief
-  is now scoped to the `:` spelling it was written for — it applied to
-  `=` as well, so `password = "SuperSecret"` was silently allowed. The
-  placeholder filter now also covers the standalone literal patterns, not
-  only keyword assignments, so an obviously fake
-  `postgres://user:redacted@host/db` stops being denied. And the rule-09
-  patch check is **no longer literally all-files**: prose targets keep
-  matching only the *bare* marker form, because v0.25.1 dropped the
-  end-of-line anchors (see below) and this repo's own docs name those
-  markers 54 times. Enforcement on code is unchanged-or-stricter; only
-  the doc false-positive surface moved.
+### 2.5 `stop_guard.py` — the done-claim gate
 
-**Rule-09 marker matching (v0.25.1).** The five single-line patterns no
-longer end in `[ \t]*(?:\n|$)`, and removing that anchor is the fix:
+**The reply text** comes from the payload's `last_assistant_message` (the
+field Claude Code documents), else `assistant_message` (the test harness and
+older payloads), else the last text-bearing assistant entry of
+`transcript_path` — read from the file's tail in growing windows
+(`TRANSCRIPT_TAIL_WINDOW`, ×16, capped), never whole.
 
-- `\r\n` could never match it, so on Windows — this plugin's primary
-  platform — all five detectors were silently off for CRLF files.
-- *Any* trailing text made a marker match nothing at all, so
-  `// @ts-ignore` + a bare deferral keyword was ALLOWED while the bare
-  form was denied, and the rationale check was never reached. Trailing
-  text now goes to `_inline_reason_is_substantive`, which accepts an
-  explanation and rejects a leading TODO / FIXME / HACK / WIP / later.
+**The turn number** is `turn_count` when the payload carries one (test
+harnesses do; production does not) and otherwise a monotonic counter the
+session state keeps per Stop.
 
-`_scan_bare_try_except_pass` returns **every** hit (a justified swallow no
-longer hides an unjustified one), tracks nested `try` blocks with a stack,
-recognises `except X: pass` one-liners, and **skips comment lines** when
-locating the swallow — that last one is what finally makes rule 09's
-why-comment hatch reachable for its most natural spelling (a rationale on
-its own line above `pass` used to move the `pass` out of the scanner's
-sight, so `_has_rationale` was never consulted). `_has_rationale` itself
-now reads **comment text only** (`_comment_text`); it used to lowercase
-the whole raw window, so any token in ordinary code — `reason =
-compute()` — satisfied the hatch.
+**The gate on everything:** a done-claim (`DONE_PATTERNS` — `已解决` / `已修复`
+/ `已完成` / `完成了` / `完工` / `搞定` / `[修改弄搞]好了` / `fixed` / `done` /
+`completed` / `resolved` / `implemented` / `finished` / `is complete` /
+`ready to ship` / `all set` / `should work now` / `that should do it`; a match
+preceded by a negator is skipped). No done-claim → the edit flag and the
+grace record are cleared and the Stop is allowed. Every layer below runs only
+on a done-claim turn; (e), (f), (g) and (i) only when the session's
+`edited_since_last_stop` flag is set (a flag, because production payloads
+carry no turn count).
 
-Unlike rule 09, rule 10 / 11 have **no Stop layer** — content detectors
-are `PreToolUse`-only by precedent (the sibling `# noqa` / `@ts-ignore`
-detectors have no Stop twin), and a Stop layer would double-jeopardy an
-already-blocked write.
+**Decision order** (the status table prints in this order, marking layers not
+yet reached as pending rather than passed):
 
-#### `Bash` bypass-pattern blocking
+| Order | Layer | Rule | Blocks when |
+|---|---|---|---|
+| 1 | (b) | 01 | a first-person hedge sits within 50 characters of the done-claim: `我[记觉]得` / `我相信` / `可能就` / `应该是` / `大概` / `I think` / `I believe` / `I guess` / `maybe` / `probably` / `kinda` / `sort of`. Bare `should` and `通常` are ordinary technical prose and deliberately excluded. |
+| 2 | (a) | 06 | no evidence (`EVIDENCE_PATTERNS`): a shell-prompt line (`$ `, `> `, `PS C:\…>`, `C:\…>`), `Ran N tests`, `N passed/failed`, `pytest` / `unittest`, a fenced block of ≥ 20 characters, `verified` / `re-ran` / `validated`, or the Chinese `重触发` / `边界用例` / `反向用例` / `收敛`. |
+| 3 | (c) | 06 | no convergence marker (`rule 06` / `convergence` / `self-quiz` / `自答` / `收敛` / `重触发` / `边界用例` / `反向用例`) and fewer than 2 of the 4 self-quiz questions (really solved? better solution? what is unverified? is the verification reasonable?). |
+| 4 | (d) | 07 | no fidelity marker (`rule 07` / `task fidelity` / `request coverage` / `request fidelity` / `no degradation` / `no omission` / `no scope creep` / `covered all` / `all requested` / `任务忠实` / `请求覆盖` / `原始请求` / `无遗漏` / `无降级` / `未降级` / `未遗漏` / `无超范围` / `未超范围`, or a `✅/⚠️/❌ … done` checklist row) and fewer than 2 of the 3 fidelity questions (coverage / standard / fidelity). |
+| 5 | (e) | 08 | edit turn, no rule-08 marker (`rule 08` / `read-before-edit` / `think-before-write` / `改前必读` / `写前必想` / `系统式自答`) and fewer than 3 of the 6 rule-02 keyword groups (architecture · responsibility · root cause · solution/approach · downstream/impact/connected · invariant/risk, each with its Chinese spelling). |
+| 6 | (f) | 09 | edit turn, no rule-09 marker (`rule 09` / `systematic modification` / `patch-style` / `non-patch` / `系统式修改` / `打补丁` / `反补丁`) and the triplet incomplete (root cause + impact/blast-radius/downstream + solution/approach/alternative). |
+| 7 | (g) | 01+06 | edit turn and a claim to have edited / created a file is contradicted by the mtime baseline recorded when the session first saw it (a created file that does not exist; an edited file whose mtime never moved). Files with no baseline pass through. `CC_ENFORCER_DISABLE_LAYER_G=1` turns the layer off. |
+| 8 | (h) | — | no `tldr` (`tldr:` / `TL;DR` / `大白话` / `一句话总结` / `一句总结`) that introduces actual text, or a tldr item wider than `TLDR_MAX_ITEM_COLUMNS` (160 display columns; a CJK character costs 2, a combining mark 0). Fires on every done-claim turn, not only edit turns. Presence uses the generous *attributable* verdict of [`lib/mdctx.py`](../hooks/scripts/lib/mdctx.py) (a marker inside a code fence or a blockquote is illustrative, not a claim), measurement the conservative *countable* one. |
+| 9 | (i) | 12 | edit turn, and a sync-gate group's `when` glob matched an edited file with its `require` side unsatisfied (§2.8), the group not yet acknowledged this session, and no sync marker in the reply. |
 
-`bash_guard.py` (matcher `Bash`) inspects the `tool_input.command` and denies
-**six static patterns plus a separately-implemented force-push detector**
-(the force-push case parses the command rather than matching a regex, so it
-does not live in `STATIC_PATTERNS`):
+**Grace is per layer.** A block records the layers spent in this recovery
+sequence; on the next Stops inside the window (`turn ∈ [last_blocked + 1,
+last_blocked + 3]`) those layers are forgiven while every other layer is still
+live, so a recovery reply that fixes the row it was told about but still
+violates another is blocked again, and no layer can block twice in one
+sequence. The first allowed Stop resets the record.
 
-| Pattern | Why |
+**Layer (i)'s acknowledgement.** A sync marker (`SYNC_MARKERS`: `rule 12` /
+`sync-check` / `repo-wide sync` / `全库同步` / `同步核对` / `连带核对`; not
+`sync-gate`, which is the config file's name) settles only the groups the
+previous block *named* (`last_blocked_groups`), and only when the block being
+recovered from was itself at layer (i): a first violation always blocks and
+names its group, and one informed answer per group suffices for the session
+(`sync_acked_groups`). The marker must carry substance — `_SYNC_NON_ANSWERS`
+treats `n/a`, `无`, `-` and similar placeholders as absent — and a marker
+inside a fence or blockquote is a quotation, not a claim. Vacuous prose
+(`sync-check: checked it`) is not detected, and is not claimed to be.
+
+**Block output** is the Stop hook's top-level shape, not the `PreToolUse`
+envelope:
+
+```json
+{"decision": "block", "reason": "cc-enforcer · Stop check FAILED at Layer (x) [rule … — …]\n\n| Layer | Rule | Status | Note |\n…"}
+```
+
+The reason is a headline naming the failing layer, the status table in
+evaluation order, the matched done-claim (and hedge), a `[Recovery — …]`
+section for that layer, a plain-words line (`In plain words:` / `大白话:`)
+and the per-layer grace footer. Every string comes from the message catalog.
+
+**Known asymmetry.** `收敛`, `重触发`, `边界用例` and `反向用例` count as
+*evidence* for layer (a) as well as convergence markers for layer (c), while
+their English counterparts (`convergence`, `re-trigger`) are markers only. A
+Chinese reply whose schema carries a `收敛:` key therefore passes layer (a) on
+the key alone; an English `convergence:` key does not. Recorded here rather
+than changed, because narrowing the evidence set is a strictness increase for
+Chinese replies and a decision for the maintainer (CHANGELOG, Unreleased).
+
+### 2.6 Shared modules (`lib/`)
+
+| Module | Answers |
 |---|---|
-| `--no-verify` (whitespace-bounded) | Skipping commit/push hooks ships unchecked code. Rule 03. |
-| `--no-gpg-sign` | Skipping commit signature verification. Rule 03. |
-| `chmod 777` (regex `chmod (-R)? 0?777`) | World-writable permissions never solve the underlying access issue and create security risk. Rule 03. |
-| `git rebase --skip` (v0.14) | Silently abandoning a conflicting commit discards work instead of resolving it. Rule 03. |
-| `--break-system-packages` (v0.14) | Bypassing PEP 668 to write into a managed interpreter. Rule 03. |
-| `rm -rf` on a root path / `$HOME` / `~` (v0.14) | Unrecoverable deletion of a whole tree. Rule 03. |
-| `git push --force` / `-f` / `+refspec` / `--mirror`, *not* `--force-with-lease` — **detector, not a static pattern** | Force-push is irreversible and can overwrite teammates' work. Rule 03. The safer `--force-with-lease` variant is allowed. |
+| `hookio.py` | The payload as text: stdin's bytes decoded as strict UTF-8, never the locale codepage. |
+| `lang.py` | The active language code, from `CC_ENFORCER_LANG`, one definition for every consumer. |
+| `messages.py` + `messages_en.py` + `messages_zh.py` | Every string a guard prints, resolved per key for the active language; the English catalog is the skeleton. |
+| `srclex.py` | Is this `#` a comment, a docstring or data? Where does this literal end? Which physical lines form one logical line? A tolerant lexer, not a parser — an Edit's `new_string` is rarely a complete syntactic unit. |
+| `mdctx.py` | Markdown line context: fence state and info string, blockquote depth (including under list items and lazy continuation), and the two attribution verdicts layer (h) and the sync marker use. |
+| `shellcmd.py` | A shell command as segments of argv, the real git subcommand past global options, and a Python interpreter's script operand. |
+| `editscale.py` | How big an edit is relative to the file it edits, plus the two shapes that are never a rolling patch (net reduction, bookkeeping). |
+| `state.py` | Per-session state: reads, baselines, counters, flags, the Stop record — with the cross-process lock and the atomic save (§2.7). |
+| `tomlio.py` | The hardened TOML reader (BOM, encoding, parse errors → diagnostics) and the writer primitives the two config CLIs share; imports `tomllib` on first use. |
+| `projroot.py` | The plugin's name, the `.claude/cc-enforcer/<file>` layout, and "is this directory a project root?" (`.git` exists or `.claude/` is a directory). |
+| `edicts.py` | Imperial Edicts: resolution, parsing and validation, the injected table, the Edit/Write and Bash matchers, the deny text. |
+| `envfile.py` | `CLAUDE_ENV_FILE` hygiene: the pure dedupe model and the failing-open pass. |
+| `sync_gate.py` | Rule 12's co-update groups: resolution, loading, the any/all evaluation against the session's edited files. |
 
-Each match emits the same deny shape as `read_guard.py`, with a reason that
-explains the rule violation and how to address the real underlying problem.
+### 2.7 Session state
 
-Word-boundary care: `--no-verify-extra` (longer flag) does not match;
-`echo --force >> notes.txt` (no `git push`) does not match;
-`git push --force-with-lease` is stripped before the `--force` check, so it
-also does not match.
+The key is the payload's `session_id`. The directory resolves in order:
+`${CLAUDE_PLUGIN_DATA}/sessions/` (set by Claude Code for plugin hooks) →
+`${CLAUDE_PROJECT_DIR}/.claude/local/cc-enforcer/sessions/` →
+`~/.claude/local/cc-enforcer/sessions/`; the file is `<sid>.json` (git-ignored
+via `.claude/local/`). Paths inside it are canonicalised with
+`os.path.realpath` + `os.path.normcase`, so case-insensitive filesystems
+compare correctly. It holds: the read set, the mtime baselines, the per-file
+small-edit counters, `edited_since_last_stop` (and `last_edit_turn` when a
+turn count exists), `edited_files`, the Stop counter, and the grace record
+(`last_blocked_turn`, layer, groups, forgiven layers, `sync_acked_groups`).
 
-**Sub-command scoping (v0.25, re-implemented as a parse model in v0.26).**
-Force-push detection began as a split on a fixed separator list (`&&`, `||`,
-`;`, `|`, newline) plus text matching inside the `git push` segments. That
-fixed the original both-directions error — `rm -f build.log && git push
-origin main` was denied as a force push (the `-f` belongs to `rm`; likewise
-`make -f`, `docker build -f`), while `git push -fu origin main`, a real force
-push since git accepts stacked short options, never matched a
-whitespace-delimited `-f` token.
+**Concurrency.** Claude Code runs parallel tool calls as concurrent hook
+processes sharing one session file. Every read and every mutation holds a
+per-session advisory lock (`fcntl.flock` on POSIX, `msvcrt.locking` on
+Windows, on a sibling `<sid>.json.lock`) across its load → mutate → save;
+`save()` writes a unique temp file and `os.replace`s it, retrying with a short
+backoff because on Windows a replace fails while any reader holds the target
+open (CPython's `open()` does not request `FILE_SHARE_DELETE`), and unlinks
+its temp file if it gives up; `load()` retries once on a transient `OSError`.
+Lock acquisition failure degrades to unlocked behaviour with a stderr note.
+Mutators save only when something changed.
 
-Since v0.26 the same decision is made through [`lib/shellcmd.py`](../hooks/scripts/lib/shellcmd.py):
-tokenise → segments → argv → git sub-command. The separator set is larger
-(it includes `$(…)`, backticks and subshell parentheses), it recurses into a
-shell's `-c` operand, and it requires `argv[0]` to actually *be* git with the
-sub-command resolved past global options. The text heuristic it replaced was
-catching `$(git push --force)` only by accident, which is why the model had
-to cover command substitution before it could ship: that command really does
-execute. In the other direction `git config alias.deploy "push --mirror"`
-(sub-command is `config`) and an `echo` of a force-push string are no longer
-denied.
+**GC.** [`gc_state.py`](../hooks/scripts/gc_state.py) (the `/cc-enforcer:gc`
+command and the auto-GC callee) prunes `*.json` session files older than N
+days and day-old orphan `*.tmp` files; it never touches lock files or the
+auto-GC marker, and auto-GC never prunes the live session.
 
-**Force-push spellings (v0.25.1).** Four more unconditional-overwrite forms
-were passing. The segment filter matched `git push` adjacently, so a global
-option between them (`git -C repo push --force`, `git --git-dir=… push`) hid
-the whole segment; quote characters are now stripped before matching, since
-`git push "--force"` is the same operation the whitespace-delimited pattern
-could not see past; and two spellings that carry no `--force` flag at all are
-now recognised — `git push origin +main:main` (git's own "force this ref"
-syntax) and `git push --mirror` (force-updates every mirrored ref).
+### 2.8 Configuration files
 
-**Register-invocation command position (v0.25.1).** `_parse_register_invocation`
-accepted *any* token ending in `register_read.py`, so
-`echo /not/executed/register_read.py --file F --hash H` registered `F` as read
-without the sanctioned script ever running (a differently-named neighbour such
-as `unregister_read.py` matched the suffix too). The token must now be in
-command position: the first word of its shell segment, or the argument of a
-Python interpreter. Tokenisation also moved to `shlex.shlex(escape="")` on
-Windows — `posix=True` mangles unquoted backslash paths (the v0.25 bug) while
-`posix=False` fails to group a quoted `--file="C:\Dir With Space\x.py"` (the
-v0.25 *fix's* bug); disabling escape handling gives quote grouping and literal
-backslashes at once.
+Two hand-edited TOML files, both read through `tomlio.py`, both failing open:
 
-If the user has explicitly authorised a bypass, `bash_guard` will still deny.
-The agent should surface the deny reason to the user and let the user run the
-command manually — that is the intended discipline (no AI-mediated bypassing).
+| File | Drives | Resolution (first existing file wins) |
+|---|---|---|
+| `.claude/cc-enforcer/edicts.toml` | Imperial Edicts (§2.2–2.4, [`EDICTS.md`](./EDICTS.md)) | `${CLAUDE_PROJECT_DIR}` → the process cwd if it looks like a project root → `~/.claude/cc-enforcer/edicts.toml` (`--global`) |
+| `.claude/cc-enforcer/sync-gate.toml` | Stop layer (i) | the Stop payload's `cwd` → `${CLAUDE_PROJECT_DIR}` → the process cwd if it looks like a project root; no home-level fallback, groups are per-repo |
 
-**Check order (v0.25).** All deny checks — static patterns, force-push,
-Imperial Edicts — run **before** the register-as-read handling below, and a file is
-registered only once the whole command is known clean. Until v0.24 the
-registration was processed first and returned immediately on success, on
-the assumption that such a command simply *was* a registration. But a
-command can *contain* a registration while doing other things, so
-`python …/register_read.py --file F --hash H && git push --force` was
-ALLOWED: the entire bypass catalog was skipped for the rest of the compound
-command. Registration and bypass-scanning are orthogonal concerns and both
-must run; putting the denies first also means a command destined for denial
-never mutates session state — the same ordering principle as v0.24's
-read_guard fix, where a DENIED Write must not grant read-before-edit
-authorization.
-
-#### Read-cache escape hatch (v0.4.0)
-
-A second responsibility of `bash_guard.py`: detect invocations of
-`register_read.py` and, only when valid, register the target file in
-session state. Motivation:
-
-- Claude Code's harness has a Read result cache. Repeated `Read` of the
-  same file within a session may be served from cache *without invoking
-  the Read tool*. When that happens, neither `PreToolUse(Read)` nor
-  `PostToolUse(Read)` fires, the file never enters session state, and a
-  later `Edit` is falsely denied.
-- We can't fix the harness from a plugin. We can provide an explicit
-  registration path: `register_read.py --file ABS_PATH --hash SHA256`.
-- The hash is the laziness gate. `bash_guard.py` recomputes SHA-256 of
-  the file on disk and only registers if it matches the agent's claim.
-  An agent that has not actually opened the file can't produce the
-  current on-disk hash, so the hatch can't be abused.
-- **Argument parsing (v0.25, superseded by the v0.26 command model).**
-  The original bug: `shlex.split(posix=True)` treats a backslash as an
-  escape, so an unquoted `C:\Users\me\note.txt` came back as
-  `C:Usersmenote.txt` and the hatch denied with "file does not exist on
-  disk" — the recovery path for a false rule-04 DENY was itself broken on
-  this plugin's primary platform. It went unnoticed for 21 releases because
-  every test quoted the path, and quoting survives posix splitting.
-  Parsing now lives in [`lib/shellcmd.py`](../hooks/scripts/lib/shellcmd.py)
-  and runs in **plain posix mode** (plus `commenters=""`, so a `#` in a
-  path no longer truncates the command). **v0.27 removed the host-OS
-  branch entirely**: v0.25.1 had disabled backslash escaping on Windows,
-  but Claude Code's Bash tool there runs Git Bash / MSYS, which is POSIX
-  — measured, that shell eats an unquoted drive path's separators just as
-  posix `shlex` does, so the branch never rescued anything, while it did
-  hide a real force-push evasion (a backslash-split `--force` reaches git
-  intact). The supported spelling for a drive path is a **quoted** one.
-  Both `--file X` and `--file=X`
-  are accepted, matching what `register_read.py`'s own argparse accepts;
-  previously the `=` spelling made the hook classify the command as "not a
-  registration", so nothing was registered while the stub script still
-  printed `register_read: ok`. The script operand is now identified by
-  argv position rather than by scanning backwards for dashes, so
-  `python -c register_read.py …` no longer registers anything (the script
-  never runs) while `python -X utf8 register_read.py …` and `python3.13`
-  are recognised.
-
-Flow:
-
-```
-agent computes SHA-256 of file --> agent runs `python register_read.py --file ABS --hash SHA`
-                                              │
-                                              ▼
-                  PreToolUse(Bash) fires → bash_guard.py
-                  ├─ recognises register_read.py invocation
-                  ├─ recomputes SHA-256 from disk
-                  ├─ if match: state_lib.add_read(session_id, path); ALLOW
-                  └─ if mismatch / file missing / bad path / bad hash: DENY
-                                              │
-                  ALLOW lets register_read.py run as a no-op CLI that prints
-                  confirmation and exits 0. The state mutation has already
-                  happened in the hook.
-```
-
-The contract is asymmetric on purpose: the user-facing script
-(`register_read.py`) verifies its own hash for command-line UX, but
-the *authoritative* hash check + state mutation lives in the hook,
-because only the hook payload exposes `session_id`.
+The cwd fallback exists because Claude Code's Bash tool does not reliably
+propagate `CLAUDE_PROJECT_DIR` on Windows; it is gated on a project-root
+marker so a session started in `~/Downloads` cannot load a stranger's hard
+rules. The reader strips a UTF-8 BOM, turns a non-UTF-8 file or a parse error
+into a stderr diagnostic instead of an exception (an exception here used to
+unwind through `read_guard` and switch read-before-edit off for the session),
+and every parsed value is type-checked before use (`severity = ["must"]` is
+valid TOML). A sync-gate group is `name`, `when` globs, `require` globs, an
+optional `note`, and `mode = "any"` (default: one `require` match satisfies)
+or `"all"`; globs are `fnmatch` against project-relative paths, `*` crosses
+separators, `./` prefixes are normalised away. `/cc-enforcer:sync-gate check`
+names a group that no file matches, because the loader is failing-open and
+such a group stops guarding silently.
 
 ---
 
-## 3. Layer 2 — Slash commands (on-demand)
+## 3. Layer 2 — Slash commands
 
-**Wired in:** [`../commands/`](../commands/).
+**Wired in:** [`../commands/`](../commands/). Flat Markdown files whose YAML
+frontmatter declares the command and whose body is the prompt the agent
+receives.
 
-Six user-invokable surfaces. (This section said "two" from v0.12, when
-`/cc-enforcer:edict` shipped, until v0.30 — three commands existed and were
-documented everywhere except the architecture doc that claims to enumerate the
-layer.)
-
-| Command | Source | Use case |
+| Command | Source | Use |
 |---|---|---|
-| `/cc-enforcer:checklist` | [`../commands/checklist.md`](../commands/checklist.md) | Print the eight-section pre-action / pre-finish discipline checklist. |
-| `/cc-enforcer:verify`    | [`../commands/verify.md`](../commands/verify.md)    | Trigger a re-verification pass on the agent's recent claims. |
-| `/cc-enforcer:edict`     | [`../commands/edict.md`](../commands/edict.md)      | `list / add / remove / reload / path` for Imperial Edicts (v0.12). Backed by [`../hooks/scripts/manage_edicts.py`](../hooks/scripts/manage_edicts.py). |
-| `/cc-enforcer:gc`        | [`../commands/gc.md`](../commands/gc.md)            | List — or with `--apply`, delete — session-state files older than N days (v0.6.1). Backed by [`../hooks/scripts/gc_state.py`](../hooks/scripts/gc_state.py). |
-| `/cc-enforcer:i18n`      | [`../commands/i18n.md`](../commands/i18n.md)        | Report structural drift between every translation and the English skeleton (v0.21). Backed by [`../hooks/scripts/i18n_check.py`](../hooks/scripts/i18n_check.py). |
-| `/cc-enforcer:sync-gate` | [`../commands/sync-gate.md`](../commands/sync-gate.md) | `init / list / check / add / remove / path` for this project's rule-12 co-update groups (v0.31). Backed by [`../hooks/scripts/manage_sync_gate.py`](../hooks/scripts/manage_sync_gate.py). **`check` is the reason it exists**: `sync_gate.load()` is failing-open, so a dropped group or a glob matching no file stops guarding *silently*. `check` names both and exits 1. Writes are validated twice — parses back, **and** every group survives a real `load_file()` round-trip, because a `require = []` entry is legal TOML the loader then discards. |
+| `/cc-enforcer:checklist` | [`checklist.md`](../commands/checklist.md) | The eight-section pre-action / pre-finish checklist. |
+| `/cc-enforcer:verify` | [`verify.md`](../commands/verify.md) | Re-verify the agent's recent claims through the verifier subagent. |
+| `/cc-enforcer:edict` | [`edict.md`](../commands/edict.md) | `list / add / remove / reload / path` for Imperial Edicts; backed by [`manage_edicts.py`](../hooks/scripts/manage_edicts.py). |
+| `/cc-enforcer:gc` | [`gc.md`](../commands/gc.md) | List, or with `--apply` delete, session-state files older than N days; backed by [`gc_state.py`](../hooks/scripts/gc_state.py). |
+| `/cc-enforcer:i18n` | [`i18n.md`](../commands/i18n.md) | Report drift between every translation and the English skeleton; backed by [`i18n_check.py`](../hooks/scripts/i18n_check.py). |
+| `/cc-enforcer:sync-gate` | [`sync-gate.md`](../commands/sync-gate.md) | `init / list / check / add / remove / path` for the project's rule-12 groups; backed by [`manage_sync_gate.py`](../hooks/scripts/manage_sync_gate.py), whose writes are validated by parsing back **and** by a real `load_file()` round-trip (a `require = []` entry is legal TOML the loader then discards). |
 
-Slash commands in Claude Code are flat Markdown files in `commands/`. Their YAML
-frontmatter declares the command's behaviour; the body is the prompt the agent
-receives when invoked.
-
-**Why their links look repo-root-relative.** A command / skill / agent / prompt
-file is a *prompt payload*, not a rendered page: the agent that reads it resolves
-paths against the project root, not against the file's own directory. So
-`[rules/03-root-cause.md](rules/03-root-cause.md)` inside `commands/checklist.md`
-is correct as written, and `test_doc_sync.py` resolves links from either base for
-exactly this reason. Documents meant for a human reader on GitHub —
-`README*.md`, `docs/`, `rules/` — use file-relative links instead.
+Links inside a command, skill, agent or prompt file are written
+repo-root-relative (`rules/03-root-cause.md`): those files are prompt
+payloads the agent resolves against the project root, not rendered pages.
+Human-facing documents (`README*.md`, `docs/`, `rules/`) use file-relative
+links, and `test_doc_sync.py` resolves from either base.
 
 ---
 
 ## 4. Layer 3 — Verifier subagent
 
-**Wired in:** [`../agents/verifier.md`](../agents/verifier.md).
-
-A read-only subagent. Given a list of `file:line` citations the main agent
-produced, the verifier independently:
-
-1. Reads each cited file.
-2. Confirms the line number exists and the cited content matches.
-3. Reports one of five verdicts per citation — `intact` / `drift` /
-   `missing` / `mismatch` / `unverifiable` (the full table, with the
-   evidence each verdict owes, is in
-   [`../agents/verifier.md`](../agents/verifier.md)).
-
-It carries `Read`, `Grep`, `Glob` tools — explicitly **no** `Edit`, `Write`, or
-`Bash`. It cannot mutate state; its only output is a verdict.
+**Wired in:** [`../agents/verifier.md`](../agents/verifier.md). Given the
+`file:line` citations the main agent produced, it independently reads each
+cited file, confirms the line exists and the content matches, and reports one
+of five verdicts per citation — `intact` / `drift` / `missing` / `mismatch` /
+`unverifiable`. It carries `Read`, `Grep` and `Glob` only: no `Edit`, `Write`
+or `Bash`, so it cannot become the fixer and has no incentive to patch a
+discrepancy quietly.
 
 ---
 
-## 5. Layer 4 — Skill (contextually auto-invoked)
+## 5. Layer 4 — Skills
 
 **Wired in:** [`../skills/systematic-debug/SKILL.md`](../skills/systematic-debug/SKILL.md)
-+ [`../skills/repo-refresh/SKILL.md`](../skills/repo-refresh/SKILL.md) (v0.23).
-
-Skills are auto-invoked by Claude Code based on the YAML `description` matching
-the user's prompt. `systematic-debug` triggers on debugging language ("debug",
-"why is this failing", "fix this bug", error/stack-trace patterns) and forces
-the agent through the seven systematic-thinking questions from
-[`../rules/02-systematic-not-reactive.md`](../rules/02-systematic-not-reactive.md)
-**before** proposing any code change.
-
-`repo-refresh` (v0.23) triggers on whole-repo audit language (`全库更新`,
-"repo refresh", "stale scan", "audit the repo") and executes rule 12's
-active half: a systematic sweep of the entire repository — docs and code
-— for stale / outdated / redundant / wrong / drifted content, every
-finding carrying `file:line` evidence, deletions gated on user
-confirmation, closing with a suggestion to register recurring co-update
-pairs as sync-gate groups.
+and [`../skills/repo-refresh/SKILL.md`](../skills/repo-refresh/SKILL.md).
+Claude Code auto-invokes a skill when its `description` matches the prompt.
+`systematic-debug` triggers on debugging language and walks the agent through
+the seven questions of rule 02 — after building a fast, deterministic
+reproduction loop — before any code change. `repo-refresh` triggers on
+whole-repo audit language and runs rule 12's active half: a sweep of code and
+prose for stale, outdated, redundant, wrong or drifted content, every finding
+with `file:line` evidence, deletions gated on the user, closing with an offer
+to register the coupling it found as sync-gate groups.
 
 ---
 
-## 6. Layer 5 — LLM-agnostic core
+## 6. Layer 5 — The rule pack
 
-**Source of truth:** [`../rules/`](../rules/) (English — the **skeleton** /
-source of truth, at the root) + [`../rules/zh/`](../rules/zh/) (Chinese
-translation). The skeleton↔translation contract is version-controlled — see
-[`I18N.md`](./I18N.md).
+**Source of truth:** [`../rules/`](../rules/) (English skeleton) and
+[`../rules/zh/`](../rules/zh/) (Chinese translation), under the contract in
+[`I18N.md`](./I18N.md): a translation tracks the skeleton file for file and
+heading for heading, and the English text wins on drift. Each rule is plain
+Markdown with a small YAML frontmatter (`id`, `title`, `severity`); every
+other layer derives from it — the prompts are distillations, the commands and
+skills cite rule ids, the verifier checks rule 05.
 
-Each rule is plain Markdown with a small YAML frontmatter (`id`, `title`,
-`severity`). Every other layer in this plugin **derives from** the English
-skeleton — the prompt injections in `prompts/` are distillations, the slash
-commands and skill reference rule IDs, the verifier checks compliance with
-rule 05. Translations live in `rules/<lang>/` (e.g. `rules/zh/`) and follow
-the skeleton file-for-file; **if a translation ever drifts from the skeleton,
-the English version wins** (and CI turns red — `i18n_check.py`, see `I18N.md`).
-
-This separation is what makes the plugin **LLM-agnostic**: any agent runtime
-that does not speak Claude Code's plugin protocol can still consume the rules
-directly:
+Any agent runtime that does not speak Claude Code's plugin protocol consumes
+the rules directly:
 
 ```bash
-# OpenAI / generic — English skeleton (default):
-cat rules/*.md > /tmp/cc-enforcer-system-prompt.txt
-
-# OpenAI / generic — Chinese translation:
-cat rules/zh/*.md > /tmp/cc-enforcer-system-prompt.txt
-
-# Cursor / Cline / Aider — symlink rules/ or rules/zh/ into the project's
-# rule directory or copy the index.
+cat rules/*.md    > cc-enforcer.txt     # English skeleton
+cat rules/zh/*.md > cc-enforcer.txt     # Chinese translation
+# prepend to the system prompt of OpenAI / Gemini / local models; or point
+# Cursor / Cline / Aider at rules/ as a rule directory
 ```
+
+The hard layers are Claude Code hooks and do not travel; the reasoning
+discipline does. [`../rules/00-index.md`](../rules/00-index.md) is the short
+form when the whole pack is too long for a system prompt.
 
 ---
 
 ## 7. Data flow at a glance
 
 ```
-Session starts
+Session starts (startup / resume / clear / compact / fork)
     │
     ▼
-SessionStart hook fires → inject_context.py --event SessionStart
-    │  reads prompts/session-start.md (distilled from rules/*.md)
-    │  then, after the payload is assembled, two maintenance passes
-    │  (both failing-open, neither touching the payload):
-    │      auto-GC        → prune old session state + rewrite _auto_gc.json
-    │                       (opt-in: CC_ENFORCER_AUTO_GC_DAYS)
-    │      envfile        → dedupe `export` lines in CLAUDE_ENV_FILE (v0.34)
+SessionStart → inject_context.py --event SessionStart
+    │  reads prompts/session-start.md + the edicts, emits the contract
+    │  then, failing open: auto-GC (opt-in) · CLAUDE_ENV_FILE dedupe
     ▼
-Claude Code injects full discipline summary into context
-
-User submits prompt
+User submits a prompt
     │
     ▼
-UserPromptSubmit hook fires → inject_context.py --event UserPromptSubmit
-    │  reads prompts/user-prompt.md (compact reminder)
+UserPromptSubmit → inject_context.py --event UserPromptSubmit
+    │  reads prompts/user-prompt.md + the edicts, emits the reminder
     ▼
-Claude Code injects pre-turn reminder
-
-Agent calls Read, Edit, or Write
+Agent calls Read / Edit / Write
     │
     ▼
-PreToolUse hook fires (matcher Read|Edit|Write) → read_guard.py
-    │
-    ├─ tool=Read                                   → record path (only if it
-    │                                                 exists) + mtime baseline,
-    │                                                 ALLOW (silent)
-    ├─ tool=Write, target exists but unrecorded    → DENY (rule 04)
-    ├─ tool=Edit,  target exists but unrecorded    → DENY (rule 04)
-    ├─ tool=Edit,  target does not exist on disk   → ALLOW (Claude Code rejects)
-    └─ otherwise → CONTENT CHECKS run on new_string / content, in order:
-           patch marker (rule 09)      → DENY
-           hardcoded secret (rule 10)  → DENY
-           path dependency (rule 11)   → DENY
-           edict deny_edit regex       → DENY
-           rolling-patch counter       → DENY on the 4th small edit
-         all clear → record read + edit-turn signal + edited_files, ALLOW
-
-    (Every write branch runs the same content pipeline — the older diagram
-     showed Write-new and recorded-Edit as bare ALLOWs, which read as "no
-     content checks apply here". They do; a new file is denied for a
-     hardcoded secret exactly like an existing one.)
-
-State file: ${CLAUDE_PLUGIN_DATA}/sessions/<sid>.json (or fallback paths)
+PreToolUse (Read|Edit|Write) → read_guard.py
+    ├─ Read                              → record path (if it exists) + baseline; ALLOW
+    ├─ Edit/Write, target exists, unread → DENY (rule 04 + 08)
+    ├─ Edit, target missing              → ALLOW (Claude Code rejects it)
+    └─ otherwise, the content pipeline on new_string / content:
+           patch marker (09) → secret (10) → path (11) → edict → rolling patch (09)
+         any hit → DENY; all clear → record read + edit flag + edited_files; ALLOW
 
 Agent calls Bash
     │
     ▼
-PreToolUse hook fires (matcher Bash) → bash_guard.py
+PreToolUse (Bash) → bash_guard.py
+    ├─ a static pattern / a force push / a must edict → DENY (rule 03 / edict)
+    ├─ a register_read.py invocation                  → SHA-256 verified:
+    │       match → record as read, ALLOW; otherwise DENY
+    └─ nothing matched                                → ALLOW (silent)
+
+Agent's reply ends
     │
-    ├─ command matches --no-verify                       → DENY (rule 03)
-    ├─ command matches --no-gpg-sign                     → DENY (rule 03)
-    ├─ command matches chmod 0?777                       → DENY (rule 03)
-    ├─ command matches git rebase --skip        (v0.14)  → DENY (rule 03)
-    ├─ command matches --break-system-packages  (v0.14)  → DENY (rule 03)
-    ├─ command matches rm -rf on root / $HOME / ~ (v0.14)→ DENY (rule 03)
-    ├─ a git push segment force-updates (--force / -f cluster / +refspec /
-    │        --mirror, but not --force-with-lease)       → DENY (rule 03)
-    ├─ command matches a must edict deny_bash regex      → DENY (edict)
-    │        (v0.25: every deny check above runs BEFORE the step below, so a
-    │         registration can no longer shield the rest of a compound command)
-    ├─ command is a register_read.py invocation          → verify SHA-256:
-    │        match   → record file as read, ALLOW
-    │        no match / missing file / bad args → DENY
-    └─ no bypass pattern matched                         → ALLOW (silent exit 0)
+    ▼
+Stop → stop_guard.py
+    ├─ no done-claim                         → clear the edit flag; ALLOW
+    └─ done-claim → layers in order (b)(a)(c)(d)(e)(f)(g)(h)(i)
+           first live failing layer → BLOCK with table + recovery + grace record
+           all pass                 → clear the edit flag and the record; ALLOW
 
-   ─── if user/agent invokes /cc-enforcer:verify ───
-                       │
-                       ▼
-            verifier subagent runs
-                       │
-                       ▼
-            re-reads cited file:line → drift/missing/intact verdict
+State: ${CLAUDE_PLUGIN_DATA}/sessions/<sid>.json (or the fallbacks in §2.7)
 
-   ─── if user prompt matches "fix this bug" ───
-                       │
-                       ▼
-            systematic-debug skill auto-invokes
-                       │
-                       ▼
-            forces 7-question root-cause walk
+  /cc-enforcer:verify   → verifier subagent re-reads every cited file:line
+  "fix this bug"        → systematic-debug skill: reproduction loop, then the 7 questions
+  "audit the repo"      → repo-refresh skill: the whole-repo staleness sweep
 ```
 
 ---
 
 ## 8. Editing this plugin — connected-files map
 
-When you change one component, these are the files that must be re-checked
-in the same change. The registered invariants are in
-[`../.claude/cc-enforcer/sync-gate.toml`](../.claude/cc-enforcer/sync-gate.toml);
-the release checklist is in the README's Contributing section.
+What to re-check in the same change. The registered floor is
+[`../.claude/cc-enforcer/sync-gate.toml`](../.claude/cc-enforcer/sync-gate.toml)
+(Stop layer (i) enforces it on this repository); the release procedure is
+[`CONTRIBUTING.md`](./CONTRIBUTING.md). Rows are sorted by path.
 
 | If you edit… | Also re-check… |
 |---|---|
-| `rules/<n>-*.md` (English skeleton) | `rules/zh/<n>-*.md` (Chinese translation — keep header structure identical, then `python hooks/scripts/i18n_check.py`), `prompts/session-start.md`, `prompts/user-prompt.md`, `docs/RULES.md`, `commands/checklist.md`, `rules/00-index.md` + `rules/zh/00-index.md` (program-readable index), `tests/test_inject_context.py` (the prompt-content assertion list) |
-| `prompts/*.md` (English skeleton) | `prompts/zh/*.md` (Chinese translation — keep header structure identical, then `python hooks/scripts/i18n_check.py`), `hooks/scripts/inject_context.py` (filename mapping), `docs/I18N.md`, this doc, and `tests/test_inject_context.py` — both its content assertions AND the budget gate. **Growing a prompt spends the edict allowance**: the contract and the user's own edicts share one 10,000-character cap, and the edicts are what yields. The gate fails when a 120-character install root plus three edicts no longer fit, which is the only thing that noticed nine releases of erosion. |
-| `hooks/scripts/inject_context.py` | `hooks/hooks.json` (registration), `.claude-plugin/plugin.json` (hooks pointer), `tests/test_inject_context.py` |
-| `hooks/scripts/lib/envfile.py` (v0.34) | `hooks/scripts/inject_context.py` (the SessionStart call site beside auto-GC), `tests/test_envfile.py`. Changing what the line model ACCEPTS changes what can be rewritten in a harness-owned file every other plugin appends to — the refusal twins must be re-checked in both directions (still collapses the field shape, still refuses anything it cannot represent byte-identically). |
-| `hooks/scripts/read_guard.py` | `hooks/hooks.json` (event registration + matcher), `hooks/scripts/lib/state.py` (state contract + `record_edit_turn`), this doc §2 (deny output contract + patch-style table + hardcoding/path-dependency table), `rules/10-no-hardcoding.md` + `rules/11-no-path-dependency.md` (the rules these detectors enforce), `tests/test_read_guard.py` (read-before-edit cases + patch-style + hardcoded-secret + path-dependency positive/negative/prose-doc-exempt cases + record_edit_turn cases) |
-| `hooks/scripts/lib/state.py` | `hooks/scripts/read_guard.py` (consumer of `record_edit_turn` + `record_edited_file`), `hooks/scripts/stop_guard.py` (consumer of `did_edit_this_turn` + `get_edited_files`), `.gitignore` (state dir must stay ignored), this doc §2 (storage location), `tests/test_read_guard.py` + `tests/test_stop_guard.py` |
-| `hooks/scripts/lib/sync_gate.py` | `hooks/scripts/stop_guard.py` (layer (i) consumer), `rules/12-repo-wide-sync.md` + `rules/zh/12-repo-wide-sync.md` (the rule it enforces), `.claude/cc-enforcer/sync-gate.toml` (this repo's own dogfood config), `hooks/scripts/lib/tomlio.py` (config reader), this doc §2 ("layer (i)" note), `tests/test_stop_guard.py` + `tests/test_sync_gate.py` (sync-gate cases) |
-| `hooks/scripts/lib/srclex.py` (v0.26) | `hooks/scripts/read_guard.py` (every rule 09/10/11 content detector + the rationale hatch), this doc §2 (shared-models list), `tests/test_audit_v026_models.py` (`TestSrclex` + the rule-09/10/11 regression classes). Changing what counts as a comment / docstring / literal changes what the rationale hatch accepts, so the twin assertions in `TestRationaleHatchV026` must be re-checked in BOTH directions. |
-| `hooks/scripts/lib/mdctx.py` (v0.26) | `hooks/scripts/stop_guard.py` — **both** halves of layer (h) (`_has_tldr` presence + `_tldr_items` length). They must stay on one model; the defect this replaced was exactly the two disagreeing. Also this doc §2, `tests/test_audit_v026_models.py` (`TestMdctx`, `TestTldrContextV026`) + `tests/test_stop_guard.py` (`TestTldrLayerH`, `TestTldrLengthLayerH`). |
-| `hooks/scripts/lib/shellcmd.py` (v0.26) | `hooks/scripts/bash_guard.py` — **both** the force-push detector and `_parse_register_invocation`. It exists so those two stop being independent text heuristics that drift; a change here needs both directions re-checked (real bypasses still denied, innocent commands still allowed). Also this doc §2, `tests/test_audit_v026_models.py` (`TestShellcmd`, `TestForcePushCommandModelV026`, `TestRegisterCommandModelV026`) + `tests/test_bash_guard.py`. |
-| `hooks/scripts/lib/editscale.py` (v0.35) | `hooks/scripts/read_guard.py` (the rule-09 frequency layer and its DENY template, which formats the LIVE constants — never a second hand-copied set), this doc §2 (shared-models list), `docs/RULES.md` (component table), `rules/09-systematic-modification.md` **and its zh mirror** (the classification table + the exemption table are the LLM-agnostic statement of this model — `rules/` is the product, so a stale bound there ships weaker discipline to every non-Claude-Code consumer), `prompts/*.md` ×4 (the DENY row agents actually act on), `tests/test_editscale.py` (unit) + `tests/test_read_guard.py::TestRollingPatchInterception` (wiring). Loosening ANY bound needs its refusal twin re-checked: the exemptions are the only place a small edit can pass at the threshold, so a test that only shows what now passes stays green when the whole gate is deleted. **Fixture warning:** these tests need a target file large enough that the ABSOLUTE bounds bind; the one-line fixture used from v0.13 to v0.34 is exactly why the small-file lock-in went unseen. |
-| `hooks/scripts/lib/tomlio.py` (v0.25) | **Both** TOML config loaders — `hooks/scripts/lib/edicts.py` and `hooks/scripts/lib/sync_gate.py`. A change here changes how *every* hand-edited config degrades, so it needs both `tests/test_edicts.py` and `tests/test_sync_gate.py` re-checked. It exists precisely so the BOM / non-UTF-8 hardening is not hand-copied into two loaders that then drift apart. |
-| `hooks/scripts/manage_sync_gate.py` (v0.31) | `commands/sync-gate.md` (the slash command), `hooks/scripts/lib/sync_gate.py` (**both** resolvers — `default_project_path` for writes, `config_path` for reads; conflating them is the defect this CLI shipped with), `hooks/scripts/lib/tomlio.py` (the shared encoder), `tests/test_manage_sync_gate.py`. A change to how a group is SERIALISED needs the round-trip assertions re-checked: the writer's contract is not "produces valid TOML" but "produces groups the loader still keeps". |
-| `hooks/scripts/lib/tomlio.py` — writer half (v0.31) | **Both** config CLIs — `manage_edicts.py` and `manage_sync_gate.py` alias `basic_string`. Its escaping rules were each learned from a config that the CLI reported as written and tomllib then refused (a raw newline; DEL passing a `>= " "` guard), so a change here can silently unenforce every rule in a project's config. `tests/test_manage_sync_gate.py::TestSharedPrimitives` pins the sharing itself, not just the behaviour. |
-| `hooks/scripts/lib/messages*.py` (v0.38) | **All three** guards — every string they print. `messages_en.py` is the skeleton: editing it changes what an English session reads, so `messages_zh.py` must move with it or `i18n_check` reports the drift (key sets and per-key `str.format` fields, both directions). Also `hooks/scripts/i18n_check.py` (`check_message_catalogs`, plus the two computed key families it expands — add a new per-layer or per-pattern family and that expander needs the same edit, or a renamed key surfaces as `<<missing message>>` inside a live deny), `tests/test_messages.py`, `tests/test_i18n_sync.py`, and **both READMEs' fenced samples**, which are captured from real runs: a wording change makes them stale, and `tests/test_demo.py` will say so for the demo images but not for the hand-placed samples. |
-| `hooks/scripts/lib/hookio.py` (v0.37) | **All four** hook entry points — `inject_context.py`, `read_guard.py`, `bash_guard.py`, `stop_guard.py`. It is the single place the payload stops being bytes, so a change here changes what *every* detector in the plugin sees. Also `tests/_helpers.py` (`ensure_ascii=False` is what makes the boundary reachable at all — restoring the default re-hides the entire class while every other test stays green) and `tests/test_hookio.py`, whose end-to-end cases force `PYTHONIOENCODING=cp936:surrogateescape` so the defect is reproducible on the UTF-8 CI runner too. Its `TestReproductionIsLive` guards against the reproduction going stale: if a future Python always decodes stdin as UTF-8, those tests must report *that*, not "fixed". |
-| `hooks/scripts/lib/projroot.py` (v0.30) | **Both** config loaders again — `lib/edicts.py` and `lib/sync_gate.py` alias it. Widening what counts as a project root widens where *both* configs may be picked up, which is a security-shaped change, not a convenience one: a false positive makes another project's `must` edicts apply to this session. Re-check `tests/test_edicts.py` (`TestCwdFallback`, `TestManageCLICwdFallback`) and `tests/test_sync_gate.py` (`TestConfigPath`). |
-| `hooks/scripts/lib/mdctx.py` — fence helper (v0.30) | `mdctx.fence_marker` now has THREE consumers: `stop_guard._is_fence`, `stop_guard`'s layer-(h) context model, and `i18n_check._fence_run`. It used to be copied into all three, each with its own comment claiming they "must agree". Changing fence geometry changes which headings `i18n_check` sees AND which tldr lines layer (h) measures — re-run `python hooks/scripts/i18n_check.py` as well as the stop-guard suite. |
-| `.claude/cc-enforcer/sync-gate.toml` | `hooks/scripts/lib/sync_gate.py` (schema), `rules/12-repo-wide-sync.md` (documented example), the README's Contributing section (the co-update map the groups encode) |
-| `skills/repo-refresh/SKILL.md` | `rules/12-repo-wide-sync.md` (active half), `rules/06-verify-convergence.md` + `rules/09-systematic-modification.md` (the disciplines its steps invoke), this doc §5, **and `commands/sync-gate.md` + `hooks/scripts/manage_sync_gate.py` (v0.32.2)** — Step 6 tells the agent to register findings as sync-gate groups, so it must name the CLI that does it and the `check` that verifies it. This pair drifted for two releases in one direction only: `commands/sync-gate.md` asserted the skill would call it while the skill still said hand-edit the TOML. A cross-document claim is a coupling; verify it from **both** ends. |
-| `hooks/scripts/bash_guard.py` | `hooks/hooks.json` (matcher entry), this doc §2 (bypass-pattern table + register-flow), `tests/test_bash_guard.py` (positive + nearby negative for every new pattern; register-flow regression cases) |
-| `hooks/scripts/stop_guard.py` | `hooks/hooks.json` (event registration; no matcher), `hooks/scripts/lib/state.py` (one-shot guard helpers + `did_edit_this_turn`), this doc §2 ("`Stop` guard" subsection), `tests/test_stop_guard.py` (every new done-claim or evidence pattern needs both directions; one-shot guard regression cases; rule 08 / rule 09 layer (e)+(f) cases) |
-| `hooks/scripts/gc_state.py` | `commands/gc.md` (`/cc-enforcer:gc` slash command), `hooks/scripts/lib/state.py` (consumes `state_dir()` to scope the GC), `tests/test_gc_state.py` (arg validation + dry-run + apply + threshold semantics) |
-| `hooks/scripts/register_read.py` | `hooks/scripts/bash_guard.py` (the actual register handling lives there), this doc §2 "Read-cache escape hatch", `tests/test_register_read.py` |
-| `hooks/scripts/bench_hooks.py` (v0.35) | `README.md` + `README.zh.md` (the benchmark section quotes its output and names it as the reproduction — numbers are machine-specific, so no CI gate pins them and the script IS the citation), the structure trees in all three inventory surfaces. Not a hook: it is the sixth auxiliary entry point, and `hooks.json` must NOT register it — `test_doc_sync` checks that registration in both directions. |
-| `hooks/hooks.json` | `.claude-plugin/plugin.json` (hooks pointer), this doc §2 (event table) |
-| `.claude-plugin/plugin.json` | `README.md` (install steps), `CHANGELOG.md`, `.claude-plugin/marketplace.json` (version sync), version-bump must match an actual change. **Do not** re-add the `commands` / `agents` / `skills` / `hooks` path fields for standard locations: they cause `claude plugin install` to fail with `Duplicate hooks file detected` or `agents: Invalid input` because Claude Code auto-discovers `./commands/`, `./agents/`, `./skills/`, and `./hooks/hooks.json`. Those manifest fields are only for *non-standard* layouts. |
-| `.claude-plugin/marketplace.json` | `README.md` (install steps), `.claude-plugin/plugin.json` (version), this doc |
-| `commands/*.md` | `.claude-plugin/plugin.json` (commands path), this doc, `README.md` |
-| `agents/verifier.md` | `commands/verify.md` (invocation), this doc |
-| `skills/systematic-debug/SKILL.md` | `rules/02-systematic-not-reactive.md`, `rules/03-root-cause.md`, this doc |
-| `tests/_helpers.py` | every `tests/test_*.py` file (they all import from here) |
-| `.github/workflows/*.yml` | `tests/test_version_sync.py` — the checkout step is a gate input, not just plumbing. `actions/checkout` is depth-1 by default, so `fetch-depth: 0` is the only thing that gives the released-heading-vs-`git tag` check a tag list; without it `_git_tags` answers None and the check skips itself while the run stays green. `TestCIGivesTheTagGateItsInput` reads that line back out of the workflow, and the `ci-workflow` group in `../.claude/cc-enforcer/sync-gate.toml` pairs the two. |
+| `.claude-plugin/plugin.json` | `.claude-plugin/marketplace.json` and `CHANGELOG.md` (the version gate holds all three to one number; `README*.md` badges too). Do **not** add `commands` / `agents` / `skills` / `hooks` path fields for the standard locations: Claude Code auto-discovers them, and the explicit fields make `claude plugin install` fail with a duplicate-hooks or invalid-agents error. |
+| `.claude-plugin/marketplace.json` | `.claude-plugin/plugin.json` (version), `README.md` (install steps). |
+| `.claude/cc-enforcer/sync-gate.toml` | `hooks/scripts/lib/sync_gate.py` (schema), `rules/12-repo-wide-sync.md` (the documented example), this section. |
+| `.github/workflows/*.yml` | `tests/test_version_sync.py` — `fetch-depth: 0` is the tag gate's input; a depth-1 checkout makes the released-heading check skip itself while the run stays green. |
+| `CHANGELOG.md` | `.claude-plugin/plugin.json` (the newest released heading must equal it), `git tag` (every released heading needs one, or a registration in `UNTAGGED_BY_RECORD`). |
+| `README.md` / `README.zh.md` | Each other (hand-maintained mirrors, same heading sequence); the pinned sentences `tests/test_doc_sync.py` derives from the code (counts, structure trees, hedge examples, coverage bars, links); the fenced guard samples, which are copies of catalog output. |
+| `agents/verifier.md` | `commands/verify.md` (invocation), §4. |
+| `commands/*.md` | §3, `README.md` (the command table, whose count is pinned); `commands/checklist.md` also `tests/test_doc_sync.py` (its `## A.`–`## H.` section count). |
+| `demo/**` | `demo/out/*.svg` are regenerated by `python demo/run_demo.py --svg` and compared byte for byte by `tests/test_demo.py`; a wording change in any guard changes the image. |
+| `docs/*.md` | `docs/README.md` (the index), `tests/test_doc_sync.py` (`ENGLISH_DOCS` / `CHINESE_DOCS` registries, `DOC_ONLY_IDENTIFIERS`, link resolution). |
+| `hooks/hooks.json` | §2 (the event table), `tests/test_doc_sync.py` (exactly four scripts and four events are registered). |
+| `hooks/scripts/bash_guard.py` | `hooks/hooks.json` (matcher), §2.4, `lib/shellcmd.py`, `lib/messages*.py` (the deny texts), `tests/test_bash_guard.py` (a positive and a nearby negative for every pattern; register-flow cases), `tests/test_startup_cost.py`. |
+| `hooks/scripts/bench_hooks.py` | `README*.md` §6 (they quote its output and name it as the reproduction); it must never appear in `hooks.json`. |
+| `hooks/scripts/gc_state.py` | `commands/gc.md`, `hooks/scripts/inject_context.py` (the auto-GC callee), `lib/state.py` (`state_dir`, `AUTO_GC_MARKER`), `tests/test_gc_state.py`. |
+| `hooks/scripts/i18n_check.py` | `docs/I18N.md`, `commands/i18n.md`, `tests/test_i18n_sync.py`; the two computed key families it expands for the message catalogs. |
+| `hooks/scripts/inject_context.py` | `hooks/hooks.json`, `prompts/*.md` (both tiers, both languages), §2.2, `tests/test_inject_context.py` (content, budget and constraint-completeness gates), `tests/test_startup_cost.py`. |
+| `hooks/scripts/manage_edicts.py` | `commands/edict.md`, `lib/edicts.py` (both resolvers), `lib/tomlio.py` (the shared writer), `tests/test_edicts.py`. |
+| `hooks/scripts/manage_sync_gate.py` | `commands/sync-gate.md`, `lib/sync_gate.py` (`default_project_path` for writes, `config_path` for reads — conflating them is the defect the CLI shipped with), `lib/tomlio.py`, `tests/test_manage_sync_gate.py`. |
+| `hooks/scripts/read_guard.py` | `hooks/hooks.json`, `lib/state.py`, `lib/srclex.py`, `lib/editscale.py`, `lib/messages*.py`, §2.3, `rules/09` / `10` / `11` (the rules it enforces, both languages), `prompts/*.md` (the DENY rows), `tests/test_read_guard.py` (every allow with its deny twin), `tests/test_startup_cost.py`. |
+| `hooks/scripts/register_read.py` | `hooks/scripts/bash_guard.py` (the authoritative check lives there), §2.4, `tests/test_register_read.py`. |
+| `hooks/scripts/stop_guard.py` | `hooks/hooks.json`, `lib/state.py` (grace helpers, `did_edit_this_turn`), `lib/mdctx.py`, `lib/sync_gate.py`, `lib/messages*.py`, §2.5, `prompts/*.md` (the layer rows), `README*.md` (the nine-layer table and the hedge examples), `tests/test_stop_guard.py` (both directions for every pattern), `tests/test_startup_cost.py` (nothing may compile at import). |
+| `hooks/scripts/lib/edicts.py` | `hooks/scripts/inject_context.py`, `read_guard.py`, `bash_guard.py`, `manage_edicts.py`, `docs/EDICTS.md`, `tests/test_edicts.py`, `tests/test_inject_context.py` (the elision boundary is keyed to the rendered row shape). |
+| `hooks/scripts/lib/editscale.py` | `read_guard.py` (the frequency layer formats the live constants), `rules/09` (+ zh: the classification and exemption tables), `prompts/*.md`, `README*.md` (the coverage-bar samples are derived from it), `tests/test_editscale.py`, `tests/test_read_guard.py`. |
+| `hooks/scripts/lib/envfile.py` | `inject_context.py` (the SessionStart call site), `tests/test_envfile.py` — the refusal twins in both directions. |
+| `hooks/scripts/lib/hookio.py` | all four hook entry points, `tests/_helpers.py` (`ensure_ascii=False` is what makes the boundary reachable), `tests/test_hookio.py`. |
+| `hooks/scripts/lib/lang.py` | `inject_context.py`, `lib/edicts.py`, `lib/messages.py`, `docs/I18N.md`. |
+| `hooks/scripts/lib/mdctx.py` | `stop_guard.py` (both halves of layer (h) and the sync-marker attribution), `i18n_check.py` (the fence helper), `tests/test_audit_v026_models.py`, `tests/test_stop_guard.py`. |
+| `hooks/scripts/lib/messages*.py` | all three guards; `messages_zh.py` must move with `messages_en.py` (key sets and placeholder fields, both directions — `i18n_check`); `i18n_check.py`'s computed key families; `tests/test_messages.py`, `tests/test_i18n_sync.py`; the fenced samples in both READMEs; `demo/out/*.svg`. |
+| `hooks/scripts/lib/projroot.py` | `lib/edicts.py`, `lib/sync_gate.py`, `lib/state.py` (they alias its name and layout); widening the root predicate widens where *both* configs are picked up — a security-shaped change. `tests/test_edicts.py`, `tests/test_sync_gate.py`. |
+| `hooks/scripts/lib/shellcmd.py` | `bash_guard.py` (the force-push detector and the register parser, both directions), `tests/test_audit_v026_models.py`, `tests/test_bash_guard.py`. |
+| `hooks/scripts/lib/srclex.py` | `read_guard.py` (every content detector and the rationale hatch — both directions), `tests/test_audit_v026_models.py`. |
+| `hooks/scripts/lib/state.py` | `read_guard.py`, `stop_guard.py`, `bash_guard.py` (registration), `gc_state.py`, `.gitignore` (the state dir stays ignored), §2.7, `tests/test_read_guard.py`, `tests/test_stop_guard.py`. |
+| `hooks/scripts/lib/sync_gate.py` | `stop_guard.py` (layer (i)), `manage_sync_gate.py`, `rules/12` (+ zh), `.claude/cc-enforcer/sync-gate.toml`, §2.8, `tests/test_sync_gate.py`, `tests/test_stop_guard.py`. |
+| `hooks/scripts/lib/tomlio.py` | both config loaders and both config CLIs; a change here changes how every hand-edited config degrades. `tests/test_edicts.py`, `tests/test_sync_gate.py`, `tests/test_manage_sync_gate.py`. |
+| `prompts/*.md` | `prompts/zh/*.md` (same heading sequence, then `python hooks/scripts/i18n_check.py`), `docs/I18N.md`, §2.2, `tests/test_inject_context.py` (needles, the 10,000-character budget with a 120-character root and three edicts, the reminder's size cap and its derived constraint set). Growing a prompt spends the edict allowance. |
+| `rules/<nn>-*.md` | `rules/zh/<nn>-*.md`, `rules/00-index.md` (+ zh), `prompts/*.md`, `docs/RULES.md`, `commands/checklist.md`, `tests/test_inject_context.py`; `rules/09` (+ zh) must keep naming the whole Bash deny set (`tests/test_doc_sync.py`). |
+| `skills/repo-refresh/SKILL.md` | `rules/12`, `rules/06`, `rules/09`, `commands/sync-gate.md` + `manage_sync_gate.py` (the skill tells the agent to register findings as groups; verify the claim from both ends), §5. |
+| `skills/systematic-debug/SKILL.md` | `rules/02`, `rules/03`, §5. |
+| `tests/_helpers.py` | every `tests/test_*.py`. |
+| `tests/test_*.py` | `tests/README.md` (the inventory), `README*.md` (the pinned test count). |

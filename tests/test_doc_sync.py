@@ -776,6 +776,7 @@ _QUOTED_ITEM = re.compile(r"`([^`]+)`|\"([^\"]+)\"|“([^”]+)”")
 # would either be silent or noisy, and a silent gate is the worse failure.
 DOC_ONLY_IDENTIFIERS: dict[str, str] = {
     "CC_ENFORCER_LANG": "environment variable read via os.environ.get, not a constant",
+    "CC_ENFORCER_AUTO_GC_DAYS": "environment variable read via os.environ.get, not a constant",
     "CLAUDE_ENV_FILE": "environment variable set by Claude Code",
     "CLAUDE_PLUGIN_DATA": "environment variable set by Claude Code",
     "CLAUDE_PROJECT_DIR": "environment variable set by Claude Code",
@@ -788,13 +789,9 @@ DOC_ONLY_IDENTIFIERS: dict[str, str] = {
     "DENY": "prose term for the verdict",
     "BLOCK": "prose term for the verdict",
     "LICENSE": "a filename",
-    "TLDR_MAX_ITEM_CHARS": (
-        "historical: renamed to TLDR_MAX_ITEM_COLUMNS in v0.35 and cited in "
-        "ARCHITECTURE only to say so"
-    ),
     "UPPER_SNAKE": (
-        "a naming SHAPE, not an identifier — the gate below describes what it "
-        "scans for using the shape's own name"
+        "a naming SHAPE, not an identifier — docs/CONTRIBUTING.md describes "
+        "what the gate below scans for using the shape's own name"
     ),
     "HANDLED": (
         "an outcome label demo/paygate/probe.py PRINTS, not a name it binds; "
@@ -1033,6 +1030,7 @@ ENGLISH_DOCS: tuple[str, ...] = (
     "README.md",
     "demo/README.md",
     "docs/ARCHITECTURE.md",
+    "docs/CONTRIBUTING.md",
     "docs/EDICTS.md",
     "docs/I18N.md",
     "docs/README.md",

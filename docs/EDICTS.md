@@ -1,7 +1,7 @@
 # Imperial Edicts — user-defined hard rules
 
 > Project-specific hard rules that ride on top of cc-enforcer's built-in
-> 12 rules. v0.12 introduces this as a layer-0 customisation mechanism.
+> 12 rules: a regex you register becomes a `PreToolUse` DENY.
 
 ---
 
@@ -77,57 +77,55 @@ severity = "should"                         # soft layer only: injected as remin
 
 | Layer | When | Behavior |
 |---|---|---|
-| Soft (SessionStart) | At session boot | All edicts (must + should) injected as a markdown table. Survives the entire session. |
-| Soft (UserPromptSubmit) | Every user turn | Re-injected to survive context compaction. |
+| Soft (SessionStart) | At session boot, and again after every compaction | All edicts (must + should) injected as a markdown table under the contract. |
+| Soft (UserPromptSubmit) | Every user turn | The same table, without its intro and footer sentences, under the per-turn reminder. |
 | Hard (`PreToolUse(Edit\|Write)`) | When agent calls Edit / Write | For each `must` edict with `deny_edit`: scan `new_string` / `content`. First match → DENY with reason naming the edict id. |
 | Hard (`PreToolUse(Bash)`) | When agent calls Bash | For each `must` edict with `deny_bash`: scan `command`. First match → DENY. |
 
-### Bilingual rendering (v0.17; default flipped to English in v0.21)
+The loader re-reads the file on every hook event, so an edict added
+mid-session is live on the next prompt. When the injection would exceed
+Claude Code's 10,000-character hook-output cap, the edict table is what
+yields — clipped at whole rows, with a notice of how many were elided — and
+the contract stays whole ([`ARCHITECTURE.md`](./ARCHITECTURE.md) §2.2).
 
-Both the soft-layer injection block and the hard-layer DENY reason
-honor the `CC_ENFORCER_LANG` env var that v0.15 introduced for the
-base prompts. Since the v0.21 skeleton flip, English is the default and
-unknown codes fall back to English:
+### Language
+
+Both the injected block and the DENY reason follow `CC_ENFORCER_LANG`;
+English is the default and unknown codes fall back to English:
 
 | `CC_ENFORCER_LANG` | Injection banner | DENY headline |
 |---|---|---|
 | unset / `en` / unknown | `🏛️ Imperial Edicts (project hard rules; priority > builtin 12)` | `cc-enforcer · Imperial Edict E01 violation` |
 | `zh` | `🏛️ 圣旨（项目自定义硬规则；优先级 > 通用 12 条）` | `cc-enforcer · 圣旨 E01 violation` |
 
-The edict `text` / `note` strings themselves are passed through
-verbatim — they're whatever you wrote in `edicts.toml`. Only the
-framing language switches.
+The edict `text` / `note` strings themselves are passed through verbatim —
+they are whatever you wrote in `edicts.toml`. Only the framing switches.
 
-**Built-in rules run first, with one documented exception.** The order in
-`read_guard.py` is:
+### Check order
+
+**Built-in rules run first, with one documented exception.** In
+`read_guard.py`:
 
 1. read-before-edit guard (rule 04 + 08)
 2. patch-style marker guard (rule 09)
 3. hardcoded-secret guard (rule 10)
 4. path-dependency guard (rule 11)
 5. **Edict scan**
-6. rolling-patch frequency guard (rule 09, v0.13) — the one built-in layer
-   that runs *after* the edict scan, because it is a counter over the
-   session rather than a content check, and it must not increment for a
-   write that some earlier layer is going to deny anyway
+6. rolling-patch frequency guard (rule 09) — the one built-in layer that
+   runs *after* the edict scan, because it is a counter over the session
+   rather than a content check, and it must not increment for a write that
+   some earlier layer is going to deny anyway
 
-Order in `bash_guard.py` (**inverted in v0.25.0** — it used to run the
-escape hatch first):
+In `bash_guard.py`:
 
 1. static deny patterns: `--no-verify` / `--no-gpg-sign` / `chmod 777` /
    `git rebase --skip` / `--break-system-packages` / `rm -rf` on a root
-   path (rule 03 + 09)
+   path (rule 03)
 2. force-push detection (parsed through `lib/shellcmd`, not a regex)
 3. **Edict scan**
-4. `register_read.py` escape hatch (v0.4.0)
-
-The v0.25.0 inversion is observable, which is why the old ordering above
-was worth correcting rather than glossing: under the documented-but-wrong
-order a `register_read` command returned before anything else ran, so it
-was never scanned by edicts — and `register_read.py --file F --hash H &&
-git push --force` was **allowed**. Under the real order every deny check
-clears first, and a command destined for denial no longer mutates session
-state.
+4. the `register_read.py` escape hatch — last, so a command that contains a
+   registration *and* something to deny (`register_read.py … && git push
+   --force`) is denied and never mutates session state
 
 You cannot define an edict that whitelists `--no-verify` — the built-in
 hook fires before reaching the edict layer.
@@ -155,7 +153,7 @@ python "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/manage_edicts.py" remove ID [--globa
 python "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/manage_edicts.py" path
 ```
 
-#### `--global` flag (v0.14)
+#### `--global` flag
 
 By default `add` writes to `${CLAUDE_PROJECT_DIR}/.claude/cc-enforcer/edicts.toml`
 (team-shareable, recommended). Pass `--global` to write to
@@ -225,19 +223,13 @@ note = "It serialises what should be concurrent; use Promise.all(arr.map(async .
 
 ## 6. Limitations
 
-These are decided, not pending. There is no "future work" list here any more:
-the one item that was on it is retired below with its reason, because a
-limitations section that doubles as a wish-list is how a permanent constraint
-gets read as a temporary one.
+These are decided, not pending — a limitations section that doubles as a
+wish-list is how a permanent constraint gets read as a temporary one.
 
-- **Per-session ephemeral edicts** (`/cc-enforcer:edict add --session ...`) —
-  proposed since v0.12, **dropped in v0.32.1**, not deferred. The blocker is
-  structural, not effort: this CLI is a Bash subprocess and has no
-  `session_id`. Only the hook payload carries one, which is precisely why
-  `register_read`'s authoritative half lives inside `bash_guard.py`. Building
-  it would mean a second hook-mediated write path for a feature whose whole
-  value is being temporary — and a `should` edict already covers the
-  light-touch case without any of that. Use the file, or pass `--should`.
+- **No per-session ephemeral edicts** (`/cc-enforcer:edict add --session ...`).
+  The blocker is structural: the CLI is a Bash subprocess and has no
+  `session_id`; only the hook payload carries one. A `should` edict already
+  covers the light-touch case. Use the file, or pass `--should`.
 - **No exception mechanism** — an edict either matches or it doesn't.
   If you want a per-file exemption, write a more specific regex or
   remove the edict.

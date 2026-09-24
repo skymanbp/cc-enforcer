@@ -13,8 +13,141 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Nothing planned. The roadmap is empty by decision, not by neglect — see
-v0.32.1 for why its last two entries were retired rather than carried.
+**The injection, the start-up path, the guard messages and the documentation,
+slimmed and put in order.** Four commits after v0.39.2, one per concern. No
+hook's enforcement semantics change: what is denied, blocked, forgiven or
+recorded is byte-identical, and every rewrite below is pinned by a test that
+says so.
+
+### Prompt injection: a contract and a reminder, not two contracts
+
+`prompts/user-prompt.md` was 7,075 characters — larger than the SessionStart
+contract it was meant to remind of, two thirds of it restating that contract
+verbatim — and it was re-sent on every prompt, so a fifty-turn session carried
+fifty copies of it until compaction. The premise that justified the copy
+("re-inject every turn so the rules survive compaction") had been overtaken:
+`SessionStart` fires again after every compaction (`source: compact`) and
+`hooks.json` registers it without a matcher, so the contract already came back.
+
+The per-turn prompt is now a 2.6k-character reminder (1.5k in Chinese) that
+names every hard gate, every Stop layer, the reply-schema field names, the tldr
+cap and the sync-check semantics, and nothing else. What left it was
+duplication, eleven version tags, and six "consequence" rows describing blocks
+the hooks never issue. `tests/test_inject_context.py` now derives the tokens the
+reminder must carry from the guards themselves (`STATIC_PATTERNS` slugs,
+`PATCH_MARKERS` labels, `_LAYER_IDS`, `TLDR_MAX_ITEM_COLUMNS`, the rolling
+threshold, the schema fields, every advertised hedge against `_HEDGE_INNER`) and
+caps its size, so it can neither lose a gate nor grow back into the contract.
+
+`session-start.md` is the single authority: its §4 no longer links a
+`CLAUDE.md` this repository stopped tracking in v0.38.2 (and the test waivers
+that covered the link are gone), the "9-layer" row names the layers (a)–(f) it
+lists, the operator-only `CC_ENFORCER_DISABLE_LAYER_G` switch is no longer shown
+to the agent, `%USERPROFILE%` joins the rule-11 row in English, and the
+sync-gate row says what actually settles a group. The per-turn edict table
+drops the intro and footer sentences the contract already carried
+(`render_injection(chrome=False)`), and the realistic-install budget test now
+covers all four prompts, not two.
+
+### Runtime: every hook loads only what its common path uses
+
+Measured on Linux / Python 3.11 before the change, a bare interpreter cost
+13 ms and every hook 63–81 ms. The difference was modules imported at start-up
+for work the common path never does, plus `stop_guard` compiling ~115 regexes
+up front — 31 of the 33 ms its import took, on a path that mostly returns after
+the done-claim check.
+
+| scenario | own share before | after |
+|---|---:|---:|
+| `UserPromptSubmit` (every prompt) | ≈ +50 ms | +19 ms |
+| `PreToolUse(Read)` | +53 ms | +27 ms |
+| `PreToolUse(Bash)` | +50 ms | +21 ms |
+| `Stop` (all nine layers) | +68 ms | +33 ms |
+
+- `inject_context`: `argparse` (and the `shutil` / `bz2` / `lzma` behind it)
+  replaced by a five-line `--event` parser with the same exit-2 contract;
+  `lib.state`, `lib.envfile` and `gc_state` imported inside the SessionStart
+  maintenance branch; the payload parsed only when auto-GC can use the session
+  id; the `from . import gc_state` branch that could never succeed removed.
+- `lib/tomlio` imports `tomllib` on first parse; `edicts` and `sync_gate` drop
+  their own sentinels and ask `tomlio.available()` only once a config file
+  exists, so a project without one never loads the parser.
+- `Edict` / `EdictHit` and `Group` / `Violation` are `__slots__` classes
+  instead of frozen dataclasses (`dataclasses` → `inspect` / `ast` / `dis`,
+  ~10 ms per hook); `mdctx.LineCtx` is a `collections.namedtuple`.
+- `traceback` is imported inside the failing-open handlers; `bash_guard`
+  imports `hashlib` and `lib.state` on the registration path only;
+  `stop_guard` imports `lib.sync_gate` when layer (i) runs.
+- `stop_guard` compiles each pattern the first time a layer uses it
+  (`_LazyPattern`); a Stop with no done-claim compiles the done set and nothing
+  else, and the lazy object answers exactly what `re.compile` would.
+- `stop_guard` reads `last_assistant_message` — the field Claude Code's Stop
+  payload documents — before the legacy `assistant_message` and the transcript
+  fallback. Production had been taking the fallback on every Stop because the
+  documented field was never read; the fallback's first window is now 256 KiB
+  (×16 growth) instead of 4 MiB.
+- `bash_guard` tokenises a command once; `state.record_edit_turn` saves only
+  when the flag or turn changes; `lib/lang.py` is the one definition of the
+  active language (three copies before); `projroot` owns `PLUGIN_NAME` and the
+  `.claude/cc-enforcer/<file>` layout; `state` owns `AUTO_GC_MARKER`.
+- `bench_hooks.py` gains the two injection scenarios, measures an allowed
+  systematic Edit and a Stop on an edit turn (all nine layers live — the old
+  Edit row measured the deny path and the old Stop row a non-edit turn), and
+  aborts on a non-zero exit or unexpected output.
+
+`tests/test_startup_cost.py` pins the property rather than the milliseconds.
+
+### Guard messages say what the hooks do
+
+Three deny / block texts told the agent something the hooks do not do: the
+block footer promised a one-shot grace ("the next Stop is allowed even if this
+layer still fails") that v0.29 had replaced with per-layer grace; recovery (a)
+and (c) offered `re-trigger` / `boundary case` / `negative case` as passing
+markers, none of which is in the English evidence or convergence sets; and the
+rolling-patch recovery advised padding an edit to ten lines to clear the
+small-edit bar — the accretion the gate exists to catch. Each now names what
+passes. The six longest messages are cut to headline, evidence and recovery;
+version tags inside them are gone; the force-push deny text joins the catalog
+so it follows `CC_ENFORCER_LANG`. Chinese catalog mirrored key for key; the demo
+image re-rendered.
+
+### Design conflicts closed
+
+`i18n_check`, `edicts` and `inject_context` no longer cite the untracked
+`CLAUDE.md`; `sync-gate.toml` and `docs/EDICTS.md` point at sections that
+exist; the Python floor is stated once as 3.11 (`tomllib`) with CI on 3.13;
+both manifest descriptions are a 923-character product description instead of a
+5.4k-character rolling changelog; the three `_PLUGIN_NAME` / `tomllib` sentinel
+/ `_resolved_lang` copies are one definition each.
+
+### Documentation reorganised
+
+`docs/ARCHITECTURE.md` (80k characters, 158 version references, every
+subsection nested under "The injection budget", the Stop guard ordered by
+release) is rewritten by component at ~35k: one subsection per hook, the Stop
+decision table in evaluation order with the markers grouped by layer, per-layer
+grace described for the first time, the shared modules, session state and the
+configuration files each in one place, the data flow including Stop, and a
+sorted, deduplicated connected-files map. `README.md` drops its release
+narrative and its duplicated principles; Contributing and the release checklist
+move to `docs/CONTRIBUTING.md`; `docs/RULES.md` is a catalog again;
+`docs/README.md` no longer claims the documents never repeat each other;
+`tests/README.md` is an inventory with live counts. History lives in this file.
+
+### Decisions recorded, not made
+
+- `收敛` / `重触发` / `边界用例` / `反向用例` count as evidence for layer (a) as
+  well as convergence markers; their English counterparts are markers only, so a
+  Chinese `收敛:` schema key passes layer (a) on its own. Narrowing the evidence
+  set is a strictness increase for Chinese replies; documented in `I18N.md` and
+  `ARCHITECTURE.md` §2.5, left to the maintainer.
+- The four entry scripts run as `__main__` and are recompiled on every call
+  (1.6–5.8 ms each); a shim that moved their bodies under `lib/` would cache the
+  bytecode at the cost of the documented four-entry-point layout. Not done.
+- `CHANGELOG.md` carries two `## [0.11.0]` headings (the first is a roadmap
+  note recorded at the time); left as history.
+
+### Tests — 749 → 765
 
 ---
 
