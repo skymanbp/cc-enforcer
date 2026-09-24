@@ -283,17 +283,13 @@ def _detect_force_push(cmd: str, segments: list[list[str]] | None = None) -> dic
         if hit:
             break
     if hit:
+        # Catalogued like every other deny text (v0.40): this was the one
+        # user-facing string that stayed hardcoded English after the
+        # v0.38 catalog, so it never followed CC_ENFORCER_LANG.
         return {
-            "name": "git push --force without --force-with-lease",
+            "name": messages.text("bash.pattern.force_push.name"),
             "rule": "03",
-            "explanation": (
-                "Force-pushing can irreversibly overwrite teammates' work. "
-                "Per rule 03 (rules/03-root-cause.md): use "
-                "`--force-with-lease` (refuses the push if the remote moved), "
-                "or rebase and do a regular push, or address the divergence "
-                "root cause. If you are absolutely certain force-push is "
-                "warranted, ask the user to run it manually."
-            ),
+            "explanation": messages.text("bash.pattern.force_push.explanation"),
         }
     return None
 

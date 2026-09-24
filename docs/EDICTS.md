@@ -244,5 +244,5 @@ gets read as a temporary one.
 - **Regex is the only matcher.** AST-based / semantic matching is out of
   scope; if you need it, write a custom hook in `hooks/hooks.json`.
 
-See [`CHANGELOG.md`](../CHANGELOG.md) §0.12 for the full enforcement
-contract changelog.
+The enforcement contract's history starts at the `[0.12.0]` entry of
+[`CHANGELOG.md`](../CHANGELOG.md).

@@ -2155,8 +2155,13 @@ class TestV012StatusTableFormat(_StopBase):
         self.assertIn("rule 06 self-quiz", out["reason"])
 
     def test_one_shot_footer_present(self) -> None:
+        # The footer states the v0.29 per-layer grace, not the pre-v0.29
+        # "next Stop is allowed regardless" one-shot it described until
+        # v0.40 — the sentence the agent reads at recovery time must match
+        # what the hook will do on the next Stop.
         rc, out, _ = self._stop("已解决")
-        self.assertIn("One-shot guard", out["reason"])
+        self.assertIn("Grace is per layer", out["reason"])
+        self.assertNotIn("next Stop is allowed even if", out["reason"])
 
     def test_layer_e_failure_marks_d_pass_and_f_pending(self) -> None:
         # Pass (a)(b)(c)(d), fail (e) — edit turn, missing rule-08 marker.

@@ -41,7 +41,7 @@ name = "version-manifests"
 when = [".claude-plugin/plugin.json"]
 require = [".claude-plugin/marketplace.json", "CHANGELOG.md"]
 mode = "all"
-note = "plugin.json is the version authority; BOTH marketplace.json AND CHANGELOG must move with it (§4.1 — updating only one of them is exactly the v0.22.1 shipping failure)."
+note = "plugin.json is the version authority; BOTH marketplace.json AND CHANGELOG must move with it (docs/CONTRIBUTING.md, Release checklist — updating only one of them is exactly the v0.22.1 shipping failure)."
 
 [[groups]]
 name = "ci-workflow"

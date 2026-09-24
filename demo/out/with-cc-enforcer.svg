@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="653" height="1831" viewBox="0 0 653 1831" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="13">
-<rect width="653" height="1831" rx="8" fill="#0d1117"/>
-<rect width="653" height="30" rx="8" fill="#161b22"/>
-<rect y="22" width="653" height="8" fill="#161b22"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="794" height="1831" viewBox="0 0 794 1831" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="13">
+<rect width="794" height="1831" rx="8" fill="#0d1117"/>
+<rect width="794" height="30" rx="8" fill="#161b22"/>
+<rect y="22" width="794" height="8" fill="#161b22"/>
 <circle cx="18" cy="15" r="5" fill="#ff5f56"/>
 <circle cx="36" cy="15" r="5" fill="#ffbd2e"/>
 <circle cx="54" cy="15" r="5" fill="#27c93f"/>
@@ -42,15 +42,16 @@
 <text x="18" y="882" fill="#d29922" xml:space="preserve">Rolling-patch counter: 3 small edit(s) already applied</text>
 <text x="18" y="901" fill="#c9d1d9" xml:space="preserve">this session; this would be attempt #4 — at or above the</text>
 <text x="18" y="920" fill="#c9d1d9" xml:space="preserve">threshold of 4.</text>
-<text x="18" y="958" fill="#d29922" xml:space="preserve">Per rule 09 (rules/09-systematic-modification.md), the cumulative</text>
-<text x="18" y="977" fill="#c9d1d9" xml:space="preserve">pattern of repeated **small** edits to the same file without a single</text>
-<text x="18" y="996" fill="#c9d1d9" xml:space="preserve">**systematic** rewrite is forbidden as &quot;rolling patches&quot;:</text>
-<text x="18" y="1034" fill="#d29922" xml:space="preserve">&gt; Four or more small edits to one file in a session, with no</text>
-<text x="18" y="1053" fill="#d29922" xml:space="preserve">&gt; systematic rewrite between them, is reactive accumulation.</text>
-<text x="18" y="1091" fill="#c9d1d9" xml:space="preserve">Each small edit fixes one symptom in isolation; the aggregate signal</text>
-<text x="18" y="1110" fill="#c9d1d9" xml:space="preserve">is that you have not re-engaged with the file's overall structure or</text>
-<text x="18" y="1129" fill="#c9d1d9" xml:space="preserve">identified the root cause.</text>
-<text x="18" y="1148" fill="#8b949e" xml:space="preserve">    ... (38 more lines of the real verdict)</text>
+<text x="18" y="958" fill="#d29922" xml:space="preserve">Per rule 09 (rules/09-systematic-modification.md), repeated **small**</text>
+<text x="18" y="977" fill="#c9d1d9" xml:space="preserve">edits to one file with no **systematic** rewrite between them are</text>
+<text x="18" y="996" fill="#c9d1d9" xml:space="preserve">rolling patches: each fixes one symptom in isolation, and the aggregate</text>
+<text x="18" y="1015" fill="#c9d1d9" xml:space="preserve">says the file's structure and root cause were never re-engaged.</text>
+<text x="18" y="1053" fill="#c9d1d9" xml:space="preserve">Classification used here:</text>
+<text x="18" y="1072" fill="#c9d1d9" xml:space="preserve">  small      = max(|old_string|, |new_string|) &lt; 200 chars</text>
+<text x="18" y="1091" fill="#c9d1d9" xml:space="preserve">               AND max line count ≤ 10</text>
+<text x="18" y="1110" fill="#c9d1d9" xml:space="preserve">  systematic = max chars ≥ 1500 OR max line count ≥ 50</text>
+<text x="18" y="1129" fill="#c9d1d9" xml:space="preserve">               OR the change spans ≥ 30% of this file — here, 12 of 37 lines or 342 of 1139 chars</text>
+<text x="18" y="1148" fill="#8b949e" xml:space="preserve">    ... (29 more lines of the real verdict)</text>
 <text x="18" y="1205" fill="#d2a8ff" xml:space="preserve">agent&gt; &quot;Fixed the charge bug. The suite is green.&quot;</text>
 <text x="18" y="1243" fill="#ff7b72" font-weight="700" xml:space="preserve">cc-enforcer · Stop check FAILED at Layer (a) [rule 06 — no evidence]</text>
 <text x="18" y="1281" fill="#d29922" xml:space="preserve">| Layer | Rule | Status      | Note                              |</text>
@@ -66,8 +67,8 @@
 <text x="18" y="1471" fill="#d29922" xml:space="preserve">| (i)   | 12   | ⏸  pending  | (not evaluated)                   |</text>
 <text x="18" y="1509" fill="#d29922" xml:space="preserve">Done-claim matched: 'Fixed'</text>
 <text x="18" y="1547" fill="#d29922" xml:space="preserve">[Recovery — rule 06]</text>
-<text x="18" y="1566" fill="#c9d1d9" xml:space="preserve">Your reply claims completion but the message contains no</text>
-<text x="18" y="1585" fill="#8b949e" xml:space="preserve">    ... (14 more lines of the real verdict)</text>
+<text x="18" y="1566" fill="#c9d1d9" xml:space="preserve">Your reply claims completion but carries no convergence</text>
+<text x="18" y="1585" fill="#8b949e" xml:space="preserve">    ... (12 more lines of the real verdict)</text>
 <text x="18" y="1623" fill="#d2a8ff" xml:space="preserve">agent&gt; Write charge.py  # systematic rewrite, root cause named</text>
 <text x="18" y="1642" fill="#3fb950" xml:space="preserve">        applied</text>
 <text x="18" y="1680" fill="#58a6ff" font-weight="700" xml:space="preserve">$ python -m unittest test_charge</text>

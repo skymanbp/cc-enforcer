@@ -30,17 +30,15 @@ from __future__ import annotations
 
 MESSAGES: dict[str, str] = {
     # ---- stop_guard ------------------------------------------------------
-    'stop.recovery.a': """Your reply claims completion but the message contains no
-convergence evidence — no `$ ` shell prompt, no test counts, no
-a re-trigger of the original symptom, no fenced output block.
+    'stop.recovery.a': """Your reply claims completion but carries no convergence
+evidence: no `$ ` shell prompt line, no test counts (`Ran N tests` /
+`N passed`), no fenced output block, no `verified` / `re-ran` /
+`validated` statement.
 
-Per rule 06 (rules/06-verify-convergence.md), surface either:
-  • The original failing command + its now-passing output, or
-  • A `pytest` / `unittest` / `npm test` run with counts, or
-  • An explicit re-trigger / boundary / negative-case write-up.
-
-If you actually verified mentally but skipped writing it down, write
-it down now with the concrete commands + outputs.""",
+Per rule 06 (rules/06-verify-convergence.md), paste the original failing
+command with its now-passing output, or a `pytest` / `unittest` /
+`npm test` run with counts. If you verified mentally and skipped writing
+it down, write it down now — the concrete command and its output.""",
     'stop.tldr.a': 'You said it is done but showed no evidence — paste one command and its output and this passes.',
     'stop.fail_note.a': 'no convergence evidence',
     'stop.layer_label.a': 'rule 06 — no evidence',
@@ -64,8 +62,8 @@ sure. If you are sure, write so; if you are not, say so.""",
     'stop.recovery.c': """Your reply has evidence but does not surface the rule-06
 self-quiz. Pass condition is either:
 
-  (a) an explicit marker — `rule 06`, `convergence`, `self-quiz`,
-      `re-trigger`, `boundary case`, `negative case`; OR
+  (a) an explicit marker — `rule 06`, `convergence`, `self-quiz`
+      (the reply schema's `convergence:` field counts); OR
   (b) ≥ 2 of the 4 self-quiz questions:
         1. Really solved?  Specific evidence, not just "no error"
         2. Better solution?  Compared against alternatives
@@ -140,47 +138,31 @@ the half-finish to the user.""",
     'stop.fail_note.f': 'rule-09 marker / triplet incomplete',
     'stop.layer_label.f': 'rule 09 — systematic-modification triplet',
     'stop.layer_keyword.f': 'rule 09',
-    'stop.recovery.g': """Your reply claims to have edited / created / modified one or
-more files, but the on-disk state contradicts at least one of those
-claims:
+    'stop.recovery.g': """Your reply claims to have edited / created / modified files,
+but the on-disk state contradicts at least one of those claims:
 
 {contradictions}
 
-Per rule 01 (verify don't guess) + rule 06 (verify convergence), a
-claim about your own actions must be true. If you said "I edited
-X.py" but X.py's content/mtime matches what it was when you first
-encountered it this session, you either:
+Per rule 01 (verify, don't guess) + rule 06 (verify convergence), a
+claim about your own actions must be true. If you said "I edited X.py"
+and X.py's mtime still matches what it was when you first saw it this
+session, then the Edit was DENIED by another hook (check earlier in the
+transcript), landed on a different file, or made no net change. Retry
+the edit, correct the path, or withdraw the claim.
 
-  (1) did not actually run the Edit (it was DENIED by another hook;
-      check earlier in the transcript), or
-  (2) ran Edit on a different file than the one you claimed, or
-  (3) the Edit produced no net change (old_string == new_string).
-
-In any of these cases the claim is false and the user is being
-misled. Fix the reply:
-
-  • If (1): retry the Edit, or surface the deny to the user.
-  • If (2): correct the path in your reply.
-  • If (3): retract the claim — describe what you actually did.
-
-This layer is **only** triggered when the on-disk evidence
-**contradicts** a claim. If we don't have a baseline for the claimed
-file (you never Read it) we can't verify it — those claims pass
-through silently. If the file actually changed but you forgot to
-mention it, that's also fine — we only catch claimed-but-didn't.
-
-If this fires falsely (you DID edit the file via another tool /
-external editor / etc.), surface the discrepancy and let the user
-decide whether to override.""",
+This layer fires only on a contradiction: a file with no baseline (you
+never Read it) is not checked, and a change you forgot to mention is not
+an error. If you did change the file through another tool, say so and
+let the user decide.""",
     'stop.tldr.g': 'You claimed you edited a file whose bytes never changed — make the edit, or withdraw the claim.',
     'stop.fail_note.g': 'file-edit claim contradicts disk state',
-    'stop.layer_label.g': 'rule 01+06 — file-claim verification (v0.16)',
+    'stop.layer_label.g': 'rule 01+06 — file-claim verification',
     'stop.layer_keyword.g': 'rule 01 + 06 file-claim',
     'stop.recovery.h': """Your reply claims completion but does not end with a
 plain-language TL;DR.
 
-Per the v0.20 canonical reply schema, every done-claim reply must close
-with a one-sentence takeaway the user can read at a glance. Add either:
+Per the reply schema, every done-claim reply must close with a
+one-sentence takeaway the user can read at a glance. Add either:
 
   • The schema's final field:  tldr: "<one plain sentence>"
   • A line starting with `tldr:` or `TL;DR:`
@@ -216,45 +198,27 @@ laziness rule 12 exists to stop. Check each listed group now: update
 the co-files, or say out loud why they are already correct.""",
     'stop.tldr.i': 'You edited one side of a registered pair and not the other — co-update it, or say in one line why it is fine.',
     'stop.fail_note.i': 'sync-gate group unmet',
-    'stop.layer_label.i': 'rule 12 — repo-wide sync gate (v0.23)',
+    'stop.layer_label.i': 'rule 12 — repo-wide sync gate',
     'stop.layer_keyword.i': 'rule 12 sync-gate',
     'stop.recovery.h_long': """Your reply has a TL;DR, but at least one of its items is
-too long to be a TL;DR:
+too long to be one:
 
   item ({length} columns > {cap} cap): {snippet!r}
 
-Per the v0.23 length contract, each tldr item is ONE sentence — cause,
-action, outcome — within {cap} display columns:
-
-  tldr: "<cause + what you did + outcome, in one sentence>"
-
-If you have several things to report, report them one per line, each a
-single short sentence within the cap:
+Each tldr item is ONE sentence — cause, action, outcome — within {cap}
+display columns. The unit is columns, not characters: an ASCII character
+costs 1, a CJK character 2 (an all-CJK item is about {cjk_cap} of them),
+a combining mark 0, and the number quoted above is that count. Several
+things to report → one short item per line, each within the cap:
 
   tldr:
     - "Fixed X: the root cause was A, and the suite is green."
     - "Co-updated B's references; no behaviour change."
 
-Do not compress by dropping the outcome — drop the process detail
-instead; the body of the reply already carries the detail.
-
-Why COLUMNS and not characters (v0.35): a CJK character occupies two
-terminal columns, so measuring code points made this cap mean two
-different things in two languages — about one sentence in English and
-about two paragraphs in Chinese. The unit is now the same on both sides
-of the contract. In practice:
-
-  • an all-ASCII item  — the cap is unchanged at {cap} characters;
-  • an all-CJK item — roughly {cjk_cap} characters, which is what a
-    single spoken sentence actually is;
-  • a mixed item — each ASCII character costs 1, each CJK character
-    costs 2, combining marks cost 0.
-
-The number quoted above is that column count, not a character count, so
-it is directly comparable to the cap. If your item is only slightly
-over, the usual cause is two sentences joined by a comma —
-split them into two items rather than trimming words out of one.""",
-    'stop.one_shot_footer': '(One-shot guard: this is the only block in the current sequence — the next Stop is allowed even if this layer still fails. Use the next turn well.)',
+Drop process detail, not the outcome — the body already carries the
+detail. An item that is only slightly over is usually two sentences
+joined by a comma: split them into two items.""",
+    'stop.one_shot_footer': '(Grace is per layer: this layer will not block again in the current recovery sequence, but any other layer still failing will. Fix what the FAIL row names; the sequence resets on the next allowed Stop.)',
     'stop.headline': 'cc-enforcer · Stop check FAILED at Layer {layer} [{label}]',
     'stop.table_header': """| Layer | Rule | Status      | Note                              |
 |-------|------|-------------|-----------------------------------|""",
@@ -273,39 +237,30 @@ split them into two items rather than trimming words out of one.""",
 Tool: {tool_name}
 Target: {file_path}
 
-This file already exists on disk but has not been Read (or Written) in
-this session. Per rule 04 (rules/04-full-context.md) + rule 08
-(rules/08-read-before-edit-think-before-write.md), edits must be
-preceded by a complete reading of the target file so you understand
-the surrounding architecture and downstream impact.
+This file exists on disk but has not been Read (or Written) in this
+session. Per rule 04 (rules/04-full-context.md) + rule 08
+(rules/08-read-before-edit-think-before-write.md), an edit must be
+preceded by a complete reading of the target, so you know the
+surrounding architecture and downstream impact.
 
-To proceed:
-  1. Call Read on this file (the entire file, not just the diff context).
-  2. After reading, retry the {tool_name}.
+To proceed: Read this file (the whole file, not just the diff context),
+then retry the {tool_name}.
 
-If you are intentionally creating a NEW file, this guard would not have
-fired -- it triggers only when the target already exists. The fact that
-it fired means there is content here you have not yet examined.
+If you HAVE Read it this session and the guard still denies (Claude Code
+occasionally serves a Read from its result cache without firing the
+hook), register the file as read -- as TWO SEPARATE Bash calls. A
+chained form (`&&`, `||`, `;`, a pipe, a command substitution) earns no
+credit even though the script still prints "register_read: ok".
 
-If you have already Read this file in this session but the guard still
-denies (Claude Code occasionally short-circuits Read to a result cache
-without firing the hook -- a known issue), you can register the file
-as read via the v0.4.0 escape hatch. Run it as TWO SEPARATE Bash tool
-calls -- the guard grants read credit only when the registration is the
-ENTIRE command of a single unconditional segment, so any chained form
-(`&&`, `||`, `;`, a pipe, a command substitution) earns no credit while
-the script still prints "register_read: ok".
-
-  Bash call 1 -- compute SHA-256 of the file currently on disk:
+  Bash call 1 -- SHA-256 of the file currently on disk:
   python -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' PATH
 
-  Bash call 2 -- register, with NOTHING chained before or after it.
-  Paste the hex digest printed by call 1 in place of HEX:
+  Bash call 2 -- register, with NOTHING chained before or after it
+  (HEX = the digest printed by call 1):
   python "${{CLAUDE_PLUGIN_ROOT}}/hooks/scripts/register_read.py" --file PATH --hash HEX
 
-The PreToolUse(Bash) hook recomputes the hash from disk and only
-registers if it matches your claim, so the escape hatch cannot itself
-be used to bypass the read requirement.
+The Bash hook recomputes the hash from disk and registers only on a
+match, so the escape hatch cannot bypass the read requirement.
 """,
     'read.deny.patch': """cc-enforcer · rule 09 violation (patch-style new_string)
 
@@ -348,34 +303,28 @@ Pattern matched: {pattern_label}
 Snippet (the offending segment in your content):
 {snippet}
 
-Per rule 10 (rules/10-no-hardcoding.md), a value that by design should
-be externalized -- read from configuration, an environment variable, a
-secret manager, or a function parameter -- has been lazily inlined as a
-literal. This is the should-have-been-a-variable antipattern:
-credentials, API keys, tokens, and private-key material must never be
-baked into source.
+Per rule 10 (rules/10-no-hardcoding.md), a value that by design belongs
+in configuration, an environment variable, a secret store or a parameter
+has been inlined as a literal. Credentials, API keys, tokens and
+private-key material never go into source.
 
 To proceed, do one of:
 
-  (1) **Externalize it** (preferred, rule 03 root cause): read the value
-      from the environment or a config / secret store, e.g.
+  (1) **Externalize it** (preferred, rule 03 root cause), e.g.
         api_key = os.environ["API_KEY"]          # not a literal
-      and keep the real value only in an untracked .env / secret store.
+      with the real value only in an untracked .env / secret store.
 
-  (2) **If this is genuinely a non-secret placeholder / example / test
-      fixture**, make it distinguishable: use an obvious placeholder
-      value (containing `example`, `changeme`, `your-`, `<...>`,
-      `${{...}}`, `dummy`, `redacted`) OR add an adjacent why-comment
-      stating it is essential / a fixture / an example (a token from:
-      essential / example / fixture / placeholder / sample /
-      test data).
+  (2) **If it is genuinely a placeholder / example / test fixture**, make
+      that visible: an obvious placeholder value (`example`, `changeme`,
+      `your-`, `<...>`, `${{...}}`, `dummy`, `redacted`) OR an adjacent
+      why-comment naming it as such (a token from: essential / example /
+      fixture / placeholder / sample / test data).
 
-  (3) **Stop and surface**: if you believe the hardcoding is truly
-      unavoidable, tell the user and let them decide -- do not silently
-      commit a secret.
+  (3) **Stop and surface**: if the hardcoding is truly unavoidable, tell
+      the user and let them decide -- do not silently commit a secret.
 
-Note: prose docs (.md / .rst / .txt / .adoc) and lockfiles are exempt
-from this detector; it targets freshly authored *code*.
+Prose docs (.md / .rst / .txt / .adoc) and lockfiles are exempt; this
+detector targets freshly authored *code*.
 """,
     'read.deny.pathdep': """cc-enforcer · rule 11 violation (non-essential path dependency)
 
@@ -387,20 +336,17 @@ Snippet (the offending segment in your content):
 {snippet}
 
 Per rule 11 (rules/11-no-path-dependency.md), a machine-specific
-absolute filesystem path -- a user-home directory, a hardcoded drive
-root, or a shell home variable baked into a string literal -- has been
-committed into code. This breaks portability the moment the code runs on
-another machine, another OS, or in CI. (This repo itself shipped v0.21.1
-to fix exactly such a Windows path-portability bug in its own hook.)
+absolute path -- a user-home directory, or a shell home variable baked
+into a string literal -- has been committed into code. It breaks the
+moment the code runs on another machine, another OS, or in CI.
 
 To proceed, do one of:
 
   (1) **Derive the path at runtime** (preferred, rule 03 root cause):
-        from pathlib import Path
         base = Path(__file__).resolve().parent          # module-relative
         base = Path(os.environ["CLAUDE_PLUGIN_DATA"])    # from a config var
-      Use a project-root marker, an env var, tempfile, or a passed-in
-      argument instead of a literal user directory.
+      A project-root marker, an env var, tempfile, or a passed-in
+      argument -- never a literal user directory.
 
   (2) **If the path is genuinely essential** (a fixed OS location that is
       identical on every target machine), add an adjacent why-comment
@@ -410,8 +356,8 @@ To proceed, do one of:
   (3) **Stop and surface**: if portability truly cannot be achieved, tell
       the user rather than silently hardcoding your own machine.
 
-Note: prose docs (.md / .rst / .txt / .adoc) and lockfiles are exempt
-from this detector; it targets freshly authored *code*.
+Prose docs (.md / .rst / .txt / .adoc) and lockfiles are exempt; this
+detector targets freshly authored *code*.
 """,
     'read.deny.rolling': """cc-enforcer · rule 09 violation (rolling-patch interception)
 
@@ -421,16 +367,10 @@ Rolling-patch counter: {current_count} small edit(s) already applied
 this session; this would be attempt #{attempt_count} — at or above the
 threshold of {threshold}.
 
-Per rule 09 (rules/09-systematic-modification.md), the cumulative
-pattern of repeated **small** edits to the same file without a single
-**systematic** rewrite is forbidden as "rolling patches":
-
-> Four or more small edits to one file in a session, with no
-> systematic rewrite between them, is reactive accumulation.
-
-Each small edit fixes one symptom in isolation; the aggregate signal
-is that you have not re-engaged with the file's overall structure or
-identified the root cause.
+Per rule 09 (rules/09-systematic-modification.md), repeated **small**
+edits to one file with no **systematic** rewrite between them are
+rolling patches: each fixes one symptom in isolation, and the aggregate
+says the file's structure and root cause were never re-engaged.
 
 Classification used here:
   small      = max(|old_string|, |new_string|) < {small_chars} chars
@@ -440,7 +380,7 @@ Classification used here:
                (resets the counter to 0)
   medium     = anything in between (does not count, does not reset)
 
-Never counted, at any counter value (v0.35):
+Never counted, at any counter value:
   net reduction — new_string is SHORTER than old_string. A rolling patch
                   is an accretion; an edit that leaves the file smaller
                   than it found it cannot be one.
@@ -450,25 +390,22 @@ Never counted, at any counter value (v0.35):
 
 To proceed, do one of:
 
-  (1) **Systematic rewrite**: combine your pending small fixes into a
-      single Edit (or Write) of ≥ {sys_lines} lines / ≥ {sys_chars}
-      chars on `new_string` / `content`{cover_hint}. This counts as
-      systematic and resets the counter to 0 for this file.
+  (1) **Systematic rewrite**: combine the pending fixes into ONE Edit (or
+      Write) of ≥ {sys_lines} lines / ≥ {sys_chars} chars on
+      `new_string` / `content`{cover_hint}. That resets the counter to 0
+      for this file.
 
-  (2) **Batch multiple typo-class fixes**: if you genuinely have several
-      independent small unrelated changes, expand the surrounding context
-      so each individual Edit clears the small-edit threshold (≥ {small_lines}
-      lines / ≥ {small_chars} chars), or use Write to replace the whole
-      file at once.
+  (2) **Delete rather than add**: a net reduction is never counted, so
+      removing the accretion is always allowed. Never pad an edit to
+      clear a threshold — padding is what this gate exists to catch.
 
   (3) **Stop and surface**: tell the user "this file needs a systematic
-      rewrite; please review my plan before I continue". Let them
+      rewrite; please review my plan before I continue" and let them
       decide whether to relax the constraint or refactor the approach.
 
-Note: this is NOT the patch-marker check — your new_string is clean of
-try/except: pass, # noqa, @ts-ignore, etc. It is the AGGREGATE PATTERN
-check: too many small fixes signal a comprehension gap, not a
-suppression.
+This is NOT the patch-marker check (your new_string carries no
+suppression marker); it is the AGGREGATE check: too many small fixes
+signal a comprehension gap, not a suppression.
 """,
     'read.scale_note': ' — here, {lines_bar} of {file_lines} lines or {chars_bar} of {file_chars} chars',
     'read.cover_hint': ', or ≥ {lines_bar} lines / ≥ {chars_bar} chars — whichever bar you clear first',
@@ -502,4 +439,9 @@ Command: {command}
     'bash.pattern.rm_rf_root.name': 'rm -rf on root / $HOME / ~',
     # essential: this message's subject IS the home paths the guard refuses.
     'bash.pattern.rm_rf_root.explanation': "Recursive force-deletion against system root, $HOME, or ~ is catastrophic and almost never the right tool. Per rule 03 (rules/03-root-cause.md), if you need to clean a build artifact use the project's clean target (`make clean`, `npm run clean`, etc.) or remove a more specific path; if you need to reset the workspace, use git (`git clean -fdx` scoped to the worktree, or `git reset --hard HEAD` after stashing). If the user truly asked for a destructive root-level rm, surface the deny and let them run the command manually — do not act on their behalf for irrecoverable operations.",
+    # The force-push detector is a parse, not a static pattern, but its
+    # deny text is user-facing like the rest and was the one string the
+    # v0.38 catalog missed (it stayed hardcoded English in bash_guard).
+    'bash.pattern.force_push.name': 'git push --force without --force-with-lease',
+    'bash.pattern.force_push.explanation': "Force-pushing can irreversibly overwrite teammates' work. Per rule 03 (rules/03-root-cause.md): use `--force-with-lease` (refuses the push if the remote moved), or rebase and do a regular push, or address the divergence root cause. If you are absolutely certain force-push is warranted, ask the user to run it manually.",
 }

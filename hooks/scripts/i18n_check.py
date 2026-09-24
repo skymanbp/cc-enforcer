@@ -7,8 +7,8 @@ Every translation lives in a language-code subdirectory (``rules/zh/``,
 ``prompts/zh/``, ``rules/<code>/``, …) and must track the skeleton
 section-for-section.
 
-This script enforces that contract as a *hard* check (CLAUDE.md §2.9 /
-rule 07 — "every modifier word lands as a hard action, not soft docs").
+This script enforces that contract as a *hard* check (rule 07 — "every
+modifier word lands as a hard action, not soft docs").
 It is wired into CI via ``tests/test_i18n_sync.py``, so any structural
 drift between a translation and the English skeleton fails the build.
 
@@ -48,8 +48,9 @@ Usage::
     python hooks/scripts/i18n_check.py           # report + exit 1 on drift
     python hooks/scripts/i18n_check.py --quiet    # exit code only
 
-No third-party deps (CLAUDE.md contract). Importable: ``check_sync()``
-returns a ``list[Drift]``; an empty list means fully in sync.
+No third-party deps (the repository's standard-library-only contract).
+Importable: ``check_sync()`` returns a ``list[Drift]``; an empty list
+means fully in sync.
 """
 
 from __future__ import annotations

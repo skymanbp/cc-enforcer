@@ -222,7 +222,7 @@ git clone https://github.com/skymanbp/cc-enforcer.git /path/to/cc-enforcer
 用 `/plugin` 验证 → **Installed** 里应该列出 `cc-enforcer@cc-enforcer`。
 命令随后以 `/cc-enforcer:checklist`、`/cc-enforcer:verify`… 的形式出现。
 
-> **依赖**：PATH 上有 Python（在 3.13 上测过）。钩子脚本只用标准库——没有 pip
+> **依赖**：PATH 上有 Python 3.11 或更新（`tomllib` 是下限；CI 跑 3.13）。钩子脚本只用标准库——没有 pip
 > 步骤，没有第三方包。
 
 #### 作为任意 LLM 的规则包
@@ -533,7 +533,7 @@ cc-enforcer 管，而且在 Windows 上明显慢于 Linux。插件自己的工�
 - **demo 门** —— 两个 README 嵌的前后对比图，每次都用真钩子重新渲染后逐字节
   比对；任何一个钩子的措辞改动都会让 CI 失败，而不是在首页留一张过期的图。
 
-**技术栈**：Python 3.13，纯标准库。零依赖、无构建步骤、无 lock 文件。
+**技术栈**：Python 3.11+（CI 用 3.13），纯标准库。零依赖、无构建步骤、无 lock 文件。
 CI：`ubuntu-latest` × `windows-latest`，`fail-fast: false`。Windows 那条腿不是
 走形式——这里有好几个回归在构造上就是 Windows 专属的（`os.replace` 共享冲突、
 `\r\n` 破坏行尾锚点、未加引号的盘符路径）。

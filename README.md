@@ -240,7 +240,8 @@ Then in any Claude Code session (CLI or IDE):
 Verify with `/plugin` → **Installed** should list `cc-enforcer@cc-enforcer`.
 Commands then surface as `/cc-enforcer:checklist`, `/cc-enforcer:verify`, …
 
-> **Requirements:** Python on PATH (tested on 3.13). Hook scripts use the
+> **Requirements:** Python 3.11 or newer on PATH (`tomllib` is the floor;
+> CI runs 3.13). Hook scripts use the
 > standard library only — no pip step, no third-party packages.
 
 #### As a rule pack for any other LLM
@@ -566,7 +567,7 @@ cc-enforcer. Four CI drift gates make documentation claims un-drift-able:
   from the live hooks and compared byte for byte, so a change to any hook's
   wording fails CI instead of leaving a stale picture on the front page.
 
-**Tech stack:** Python 3.13, standard library only. No dependencies, no build
+**Tech stack:** Python 3.11+ (CI: 3.13), standard library only. No dependencies, no build
 step, no lock file. CI: `ubuntu-latest` × `windows-latest`, `fail-fast: false`.
 The Windows leg is not box-ticking — several regressions here are Windows-only
 by construction (`os.replace` sharing violations, `\r\n` defeating end-of-line

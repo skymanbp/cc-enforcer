@@ -283,8 +283,8 @@ def load() -> list[Edict]:
       • no edicts.toml exists (the normal case for projects not using
         圣旨)
       • the file is empty / has no `[[edicts]]` tables
-      • tomllib unavailable (Python < 3.11 — should never happen given
-        cc-enforcer's stated Python 3.13 baseline)
+      • tomllib unavailable (Python < 3.11 — below the floor the README
+        states, so it should never happen on a supported interpreter)
 
     Never raises: any parse / IO error is logged to stderr and an empty
     list returned, so the surrounding hooks fall through to their usual
