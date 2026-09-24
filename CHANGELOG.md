@@ -151,10 +151,10 @@ hook's ≤ 10-line bound; rule 10's "10+ chars" is the detector's 8; rule 11
 names `CLAUDE_PLUGIN_DATA` (not `CC_PLUGIN_DATA`) and no longer quotes a
 maintainer's home path; rule 12 describes per-layer grace instead of the
 retired one-shot guard; "minimum effective change" is defined once, in rule 07
-check 4, where six sites already pointed. The English pack goes from 89.0k to
-79.5k characters (rule 09: 21.8k → 14.0k) and the Chinese mirror from 83.3k to
-74.2k, with identical heading sequences and the same enforcement tokens.
-`commands/checklist.md` (17.7k → 12.2k) keeps its eight sections, the closed
+check 4, where six sites already pointed. The English pack goes from 87.9k to
+78.5k characters (rule 09: 21.5k → 13.8k) and the Chinese mirror from 42.3k to
+37.1k, with identical heading sequences and the same enforcement tokens.
+`commands/checklist.md` (9.4k → 6.7k characters) keeps its eight sections, the closed
 patch-marker set, the output format and the items with no rule-text
 counterpart, and stops restating the rules and the prompts; its description
 now counts eight sections, and its example reads "layer (a)–(i)".
