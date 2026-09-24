@@ -18,6 +18,105 @@ v0.32.1 for why its last two entries were retired rather than carried.
 
 ---
 
+## [0.41.0] — 2026-09-24
+
+**The three decisions v0.40.0 recorded, made.** That entry closed with three
+"decisions recorded, not made" — the Chinese evidence words, the entry
+scripts that re-compile on every call, the duplicated `[0.11.0]` heading —
+and the maintainer's ruling was to make all three rather than carry them.
+One of them changes what a hook accepts; it is stated as a contract change
+below, not as a bug fix. The CI runtime deprecation is closed in the same
+release. One commit for the work, one for the release.
+
+### Stop layer (a): vocabulary is not evidence, in either language
+
+`EVIDENCE_PATTERNS` held, besides the output shapes, four Chinese rule-06
+check names (`重触发` / `边界用例` / `反向用例` / `收敛`) and three English verbs
+(`verified` / `re-ran` / `validated`). Each half let a reply clear the "show
+your work" layer by *naming* the work: a bare `收敛:` schema key passed (a) in
+Chinese while `convergence:` did not — the asymmetry v0.40.0 recorded — and,
+in the direction nobody had recorded, `Fixed, verified.` passed in English
+while `已修复，已验证。` did not. The v0.40.0 note proposed dropping the four
+Chinese words; that would have flipped the asymmetry, not removed it. Both
+halves are gone. What remains is output-shaped only — a shell-prompt line, a
+test count, a runner's name, a fenced block — and it is the same set for
+both languages. The check names still count as convergence markers for layer
+(c), where naming the check is exactly what is asked.
+
+This is a strictness increase for both languages: a reply that says it
+verified and shows nothing is now blocked at (a) whatever language it is in.
+Both recovery texts stop offering the words as a way through. The one test
+that asserted the old allow (`完成了。重触发原症状后异常消失。` with no output)
+is now the block case, in both languages, with the twin that adds one output
+line and passes — the words were removed from the evidence set only. A note
+for the next person who writes such a fixture: `rule 06 passed` is output-
+shaped, because `06 passed` matches the test-count pattern; the English case
+had to avoid a digit before the verb.
+
+### The four hook entries are thin shells over cached modules
+
+CPython caches the bytecode of every module it *imports* under `__pycache__`
+and re-uses it while the source is unchanged; the script it was asked to
+*run* is compiled from source on every start and never cached. Every hook
+entry was its whole body, so every invocation paid the compile — on the
+maintainer's machine, p50 of fifty in-process compiles: `inject_context.py`
+1.4 ms, `read_guard.py` 3.2 ms, `bash_guard.py` 2.2 ms, `stop_guard.py`
+6.8 ms, for hooks whose own work is often less than that. The v0.40 sweep
+had trimmed what the entries import and left this, the one cost on the path
+that the entries could not avoid by importing less.
+
+Each body now lives in `<entry>_impl.py`, unchanged apart from a two-line
+docstring note and the removal of its `__main__` block (one entry per hook,
+not two); each entry is a 43-line shell that puts its own directory on
+`sys.path`, imports the body and calls its `main()`. The entries keep their
+names, so `hooks.json`, the tests, the demo, the benchmark and the docs
+address the same files as before. The shells compile in 0.09 ms. Measured
+under identical load, interleaved, eleven runs each, the median self-time of
+the body's import (`-X importtime`) from source versus from bytecode:
+`inject_context_impl` 3.5 → 1.6 ms, `read_guard_impl` 7.6 → 3.5 ms,
+`bash_guard_impl` 4.2 → 1.5 ms, `stop_guard_impl` 10.9 → 2.2 ms. The
+wall-clock table in README §6 is not re-quoted: the machine was under an
+unrelated build during this release and the absolute figures would not have
+been comparable.
+
+Two design points, each pinned. Imported rather than run, a shell hands the
+caller the body module itself (a `sys.modules` swap) and also carries the
+body's names: `inject_context.PLUGIN_ROOT = …` in `test_inject_context.py`
+must reach the code that runs, and a copied namespace alone would have let
+that patch land on a copy while the test stayed green. And the shell
+bootstraps `sys.path` itself: the first draft did not, and `test_doc_sync`,
+which loads `bash_guard.py` by file path from a process that never put
+`hooks/scripts` on its path, was the gate that failed. `tests/
+test_startup_cost.py` now pins all of it: an entry defines nothing and
+imports its body; after one run of the entry the body's `.pyc` exists and
+the entry's never does, while the body run as a script is not cached either
+(the mechanism the split exists for, with its twin); importing an entry
+yields the body; loading an entry by path from a bare `-I` interpreter still
+finds it. The `guards-readme` sync-gate group's glob widens to
+`hooks/scripts/*_guard*.py`, since the behaviour it guards now lives in the
+bodies.
+
+### CHANGELOG: the roadmap block that duplicated the 0.11.0 heading
+
+Two `## [0.11.0] — 2026-05-19` headings: the first introduced a roadmap block
+("future-version candidate", "currently held back") written at that release,
+the second the release itself. `test_version_sync._changelog_entry("0.11.0")`
+returned the roadmap. The first is retitled `## Roadmap as recorded at
+0.11.0 — 2026-05-19`; its body is byte-identical (a dated record is not
+rewritten — the v0.33.0 ruling). The `[Unreleased]` compare link at the foot
+of this file had pointed at `v0.11.0...HEAD` since that release; it now
+points at the current tag.
+
+### CI: actions on the Node 24 runtime
+
+`actions/checkout@v4` → `@v7` and `actions/setup-python@v5` → `@v7`. Every
+run had carried GitHub's Node 20 deprecation warning for the two actions;
+the v7 lines run on Node 24. No change to what the workflow does.
+
+768 → 773 tests.
+
+---
+
 ## [0.40.0] — 2026-09-24
 
 **The injection, the start-up path, the guard messages, the documentation and
