@@ -124,7 +124,7 @@ both manifest descriptions are a 923-character product description instead of a
 
 `docs/ARCHITECTURE.md` (80k characters, 158 version references, every
 subsection nested under "The injection budget", the Stop guard ordered by
-release) is rewritten by component at ~35k: one subsection per hook, the Stop
+release) is rewritten by component at ~41k: one subsection per hook, the Stop
 decision table in evaluation order with the markers grouped by layer, per-layer
 grace described for the first time, the shared modules, session state and the
 configuration files each in one place, the data flow including Stop, and a
