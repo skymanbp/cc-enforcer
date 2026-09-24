@@ -13,11 +13,19 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+Nothing planned. The roadmap is empty by decision, not by neglect — see
+v0.32.1 for why its last two entries were retired rather than carried.
+
+---
+
+## [0.40.0] — 2026-09-24
+
 **The injection, the start-up path, the guard messages, the documentation and
 the rules pack, slimmed and put in order.** Five concerns after v0.39.2, one
-commit each. No hook's enforcement semantics change: what is denied, blocked,
-forgiven or recorded is byte-identical, and every rewrite below is pinned by a
-test that says so.
+commit each, from a cloud session; a sixth, found the moment the branch ran on
+the maintainer's own Windows machine, is recorded below (`b07430d`). No hook's
+enforcement semantics change: what is denied, blocked, forgiven or recorded is
+byte-identical, and every rewrite below is pinned by a test that says so.
 
 ### Prompt injection: a contract and a reminder, not two contracts
 

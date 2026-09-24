@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Single-plugin marketplace exposing the cc-enforcer discipline plugin.",
-    "version": "0.39.2"
+    "version": "0.40.0"
   },
   "plugins": [
     {
       "name": "cc-enforcer",
       "source": "./",
       "description": "Rules your coding agent physically cannot ignore. A Claude Code plugin (and an LLM-agnostic rule pack) that intercepts the agent's own tool calls instead of asking it nicely: PreToolUse denies an edit that skips read-before-edit, plants an unjustified suppression marker, hardcodes a secret or a machine-specific path, or piles rolling patches onto one file; a Bash gate refuses --no-verify, force-push and similar bypasses; and a nine-layer Stop gate refuses to let a completion claim end the turn without evidence, a convergence self-quiz, a fidelity check against the original request and a one-line TL;DR. Twelve rules (ten hook-backed), per-project Imperial Edict regexes you define yourself, a repo-wide sync gate, and CI drift gates that derive every documented number from the code. Standard library only; every guard fails open, so a bug in the discipline can never brick your agent. Release history: CHANGELOG.md.",
-      "version": "0.39.2",
+      "version": "0.40.0",
       "author": {
         "name": "skymanbp"
       },
