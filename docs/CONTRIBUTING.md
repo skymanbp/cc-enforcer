@@ -34,8 +34,11 @@ denied by it while working on it.
   ([`I18N.md`](./I18N.md)). On drift, the translation moves.
 - **One document, one language.** English documents carry no Chinese prose
   outside code spans (a detector token in backticks is data, not prose);
-  `tests/test_doc_sync.py` registers every markdown file as English, Chinese
-  or deliberately unscanned, and a new file must be registered.
+  `tests/test_doc_sync.py` registers every tracked markdown file as English,
+  Chinese or deliberately unscanned, and a new file must be registered. The
+  gates enumerate the git index, not the working tree: an ignored or
+  untracked file on your machine is invisible to them, and so is a link to
+  one.
 - **Numbers are derived, not typed.** Test counts, command counts, the
   structure trees, the advertised hedge triggers, the sample coverage bars
   and every backticked `UPPER_SNAKE`-style identifier in the docs are checked

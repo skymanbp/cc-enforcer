@@ -37,9 +37,11 @@ own advice.
 Design notes (mirrors test_version_sync.py deliberately)
 --------------------------------------------------------
 1. **Values are derived from code, never from another doc.** Every expected
-   number and inventory is computed at runtime from the filesystem or by
-   importing the module that owns the fact. Nothing is compared doc-to-doc:
-   two docs can drift together, and in this repo they demonstrably did.
+   number and inventory is computed at runtime from the code on disk or by
+   importing the module that owns the fact, and the set of documents itself
+   comes from the git index (`_tracked`), never from a walk of the working
+   tree. Nothing is compared doc-to-doc: two docs can drift together, and in
+   this repo they demonstrably did.
 2. **Registered sites cannot go stale silently.** Each site carries a regex
    that must match; a regex matching nothing fails as "stale registration"
    rather than passing vacuously, so rewording a pinned sentence breaks the
@@ -95,6 +97,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -106,14 +111,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # --------------------------------------------------------------------------- #
 # v0.38.2 — CLAUDE.md is no longer tracked (it carried the maintainer's mail
 # address and machine paths, and it is agent instructions rather than reader
-# documentation). It stays on disk and Claude Code still loads it, so the
-# gates below check it WHEN PRESENT and skip it when it is not.
-#
-# Stated rather than assumed: on CI the file never exists, so its four
-# registered claims are verified only where it lives. That is weaker than a
-# CI gate and is accepted because the alternative is no check at all — every
-# other surface those claims appear on (README.md, README.zh.md, both
-# manifests, docs/ARCHITECTURE.md) is still gated on every push.
+# documentation). It stays on disk and Claude Code still loads it, but to
+# every gate here it is absent: the document set is the git index (see
+# `_tracked` below), so the file never enters a scan, and the hand-written
+# surface tuples that still name it are filtered through `_present` so a
+# reader can see it was considered. The test
+# `test_untracked_local_docs_are_actually_untracked` pins the two halves
+# that keep this true — out of the index AND ignored.
 # --------------------------------------------------------------------------- #
 UNTRACKED_LOCAL_DOCS = ("CLAUDE.md",)
 
@@ -134,6 +138,66 @@ def _present(names):
     silently does not mention it.
     """
     return tuple(n for n in names if n not in UNTRACKED_LOCAL_DOCS)
+
+
+# --------------------------------------------------------------------------- #
+# v0.40 — the document set is the git index, not the working tree.
+#
+# Every scanner in this file used to walk REPO_ROOT with `rglob` and a skip
+# list of directory names it had learned one incident at a time (`.git`,
+# `.ce`, `memory`, `node_modules`, `__pycache__`, `.pytest_cache` — three
+# lists, no two alike). On the maintainer's machine another plugin keeps 21
+# ignored markdown files under `.ccm/`, a name none of the lists knew: the
+# suite was red there and green on CI and in a cloud checkout, neither of
+# which has such a directory. A blacklist of the shapes seen so far is
+# exactly what this file's own docstring warns against. What a clone gets
+# is what git tracks; ask git, once, and derive every set from that.
+# --------------------------------------------------------------------------- #
+_TRACKED: tuple[str, ...] | None = None
+
+
+def _tracked(suffix: str = "") -> tuple[str, ...]:
+    """Repo-relative posix paths of every tracked file ending in `suffix`.
+
+    Loud on failure: a `git` that is missing or errors, or a listing with
+    nothing in it, raises instead of returning an empty tuple — an empty
+    document set would let every scan below pass vacuously.
+    """
+    global _TRACKED
+    if _TRACKED is None:
+        proc = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "-z"],
+            capture_output=True, check=False,
+        )
+        if proc.returncode != 0:
+            raise AssertionError(
+                "git ls-files failed; the doc gates cannot enumerate the "
+                f"repository: {proc.stderr.decode('utf-8', 'replace')}")
+        _TRACKED = tuple(sorted(
+            p for p in proc.stdout.decode("utf-8").split("\0") if p))
+    paths = tuple(p for p in _TRACKED if p.endswith(suffix))
+    if not paths:
+        raise AssertionError(
+            f"git ls-files lists no tracked *{suffix} file; every scan over "
+            f"that set would pass vacuously")
+    return paths
+
+
+def _tracked_in(directory: str, suffix: str) -> tuple[str, ...]:
+    """Tracked files directly under `directory` (not deeper) ending in `suffix`."""
+    prefix = directory.rstrip("/") + "/"
+    return tuple(p for p in _tracked(suffix)
+                 if p.startswith(prefix) and "/" not in p[len(prefix):])
+
+
+def _tracked_dirs() -> set[str]:
+    """Every directory a tracked file implies, plus "." for the root."""
+    dirs = {"."}
+    for p in _tracked():
+        parts = p.split("/")
+        for i in range(1, len(parts)):
+            dirs.add("/".join(parts[:i]))
+    return dirs
 
 
 RULES_DIR = REPO_ROOT / "rules"
@@ -644,12 +708,12 @@ class TestModuleInventoriesAreComplete(unittest.TestCase):
         which is not there misleads exactly as much as one that omits a
         file which is.
         """
-        on_disk = {p.name for p in REPO_ROOT.rglob("*.py")}
+        in_repo = {p.rsplit("/", 1)[-1] for p in _tracked(".py")}
         ghosts: dict[str, list[str]] = {}
         for surface in INVENTORY_SURFACES:
             tree = self._tree_text(surface)
             named = set(re.findall(r"\b([a-z_][a-z0-9_]*\.py)\b", tree))
-            absent = sorted(named - on_disk)
+            absent = sorted(named - in_repo)
             if absent:
                 ghosts[surface] = absent
         self.assertEqual(
@@ -735,21 +799,22 @@ def _load_editscale():
 
 
 def _python_identifiers() -> set[str]:
-    """UPPER_SNAKE names bound anywhere in this repo's Python.
+    """UPPER_SNAKE names bound anywhere in this repo's tracked Python.
 
     Union of module-level assignments and def/class names across hooks/ and
     tests/, so a doc may cite a constant that lives in a test as readily as
-    one in a hook.
+    one in a hook. Tracked files only: a scratch module on one machine must
+    not make a citation resolve there and nowhere else.
     """
     names: set[str] = set()
-    roots = (SCRIPTS_DIR, REPO_ROOT / "tests")
-    for root in roots:
-        for path in root.rglob("*.py"):
-            text = path.read_text(encoding="utf-8")
-            names |= set(re.findall(r"^(_?[A-Z][A-Z0-9_]{2,})\s*[:=]",
-                                    text, re.MULTILINE))
-            names |= set(re.findall(r"^(?:def|class)\s+(_?[A-Z][A-Z0-9_]{2,})\b",
-                                    text, re.MULTILINE))
+    for rel in _tracked(".py"):
+        if not rel.startswith(("hooks/scripts/", "tests/")):
+            continue
+        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        names |= set(re.findall(r"^(_?[A-Z][A-Z0-9_]{2,})\s*[:=]",
+                                text, re.MULTILINE))
+        names |= set(re.findall(r"^(?:def|class)\s+(_?[A-Z][A-Z0-9_]{2,})\b",
+                                text, re.MULTILINE))
     return names
 
 
@@ -896,32 +961,32 @@ class TestSampleCoverageBarMatchesEditscale(unittest.TestCase):
         )
 
 
+_IDENTIFIER_TOKEN = re.compile(r"`(_?[A-Z][A-Z0-9_]{2,})`")
+
+
+def _identifier_scan_files() -> list[str]:
+    """Tracked markdown the identifier check reads (CHANGELOG is history)."""
+    return [p for p in _tracked(".md")
+            if p.rsplit("/", 1)[-1] not in IDENTIFIER_SCAN_SKIP]
+
+
+def _undefined_identifiers() -> dict[str, list[str]]:
+    """Backticked UPPER_SNAKE tokens with no Python definition → citing docs."""
+    defined = _python_identifiers()
+    out: dict[str, list[str]] = {}
+    for rel in _identifier_scan_files():
+        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        for token in set(_IDENTIFIER_TOKEN.findall(text)):
+            if token not in defined:
+                out.setdefault(token, []).append(rel)
+    return out
+
+
 class TestDocsCiteOnlyLiveIdentifiers(unittest.TestCase):
     """A backticked constant in a doc must exist, or be a registered exception."""
 
-    _TOKEN = re.compile(r"`(_?[A-Z][A-Z0-9_]{2,})`")
-
-    def _doc_files(self) -> list[Path]:
-        skip_dirs = {".git", ".ce", "memory", "node_modules", "__pycache__"}
-        return [p for p in REPO_ROOT.rglob("*.md")
-                if not skip_dirs & set(p.relative_to(REPO_ROOT).parts)
-                and p.name not in IDENTIFIER_SCAN_SKIP
-                and p.relative_to(REPO_ROOT).as_posix()
-                not in UNTRACKED_LOCAL_DOCS]
-
-    def _undefined(self) -> dict[str, list[str]]:
-        defined = _python_identifiers()
-        out: dict[str, list[str]] = {}
-        for path in self._doc_files():
-            rel = path.relative_to(REPO_ROOT).as_posix()
-            for token in set(self._TOKEN.findall(
-                    path.read_text(encoding="utf-8"))):
-                if token not in defined:
-                    out.setdefault(token, []).append(rel)
-        return out
-
     def test_no_doc_cites_a_constant_that_does_not_exist(self) -> None:
-        unknown = {k: v for k, v in self._undefined().items()
+        unknown = {k: v for k, v in _undefined_identifiers().items()
                    if k not in DOC_ONLY_IDENTIFIERS}
         self.assertEqual(
             unknown, {},
@@ -935,7 +1000,7 @@ class TestDocsCiteOnlyLiveIdentifiers(unittest.TestCase):
 
     def test_the_exception_registry_is_not_stale(self) -> None:
         """A registered exception that is now defined must be de-registered."""
-        present = set(self._undefined())
+        present = set(_undefined_identifiers())
         vanished = sorted(set(DOC_ONLY_IDENTIFIERS) - present)
         self.assertEqual(
             vanished, [],
@@ -945,6 +1010,41 @@ class TestDocsCiteOnlyLiveIdentifiers(unittest.TestCase):
         )
 
 
+_LINK_RE = re.compile(r"\]\(([^)\s]+)\)")
+_LINK_SKIP_PREFIX = ("http://", "https://", "mailto:", "#", "/")
+
+
+def _unresolvable_links() -> list[str]:
+    """`<doc> -> <target>` for every repo-relative link a clone cannot follow.
+
+    Resolved against the index, not the disk: a target that is untracked or
+    ignored here (CLAUDE.md, another tool's directory) is a 404 in every
+    clone, however real it looks on this machine. Both bases are tried —
+    file-relative and repo-root-relative — because prompt payloads write
+    root-relative links (ARCHITECTURE.md §3).
+    """
+    files = set(_tracked())
+    dirs = _tracked_dirs()
+    out: list[str] = []
+    for rel in _tracked(".md"):
+        path = REPO_ROOT / rel
+        for target in _LINK_RE.findall(path.read_text(encoding="utf-8")):
+            if target.startswith(_LINK_SKIP_PREFIX):
+                continue
+            if re.match(r"^[A-Za-z]:[\\/]", target):   # drive-letter path
+                continue
+            cleaned = target.split("#", 1)[0]
+            if not cleaned:
+                continue
+            candidates = {
+                _relative_to_repo(path.parent / cleaned),
+                _relative_to_repo(REPO_ROOT / cleaned),
+            } - {""}
+            if not any(c in files or c in dirs for c in candidates):
+                out.append(f"{rel} -> {target}")
+    return out
+
+
 class TestMarkdownCitationsResolve(unittest.TestCase):
     """Rule 05: a citation a reader cannot follow is not a citation.
 
@@ -952,44 +1052,8 @@ class TestMarkdownCitationsResolve(unittest.TestCase):
     absolute/drive-letter paths are somebody else's problem and are skipped.
     """
 
-    _LINK = re.compile(r"\]\(([^)\s]+)\)")
-    _SKIP_PREFIX = ("http://", "https://", "mailto:", "#", "/")
-
-    def _markdown_files(self) -> list[Path]:
-        skip_dirs = {".git", ".ce", "node_modules", "__pycache__"}
-        return [p for p in REPO_ROOT.rglob("*.md")
-                if not skip_dirs & set(p.relative_to(REPO_ROOT).parts)
-                and p.relative_to(REPO_ROOT).as_posix()
-                not in UNTRACKED_LOCAL_DOCS]
-
-    def _unresolvable_links(self) -> list[str]:
-        out: list[str] = []
-        for path in self._markdown_files():
-            rel = path.relative_to(REPO_ROOT).as_posix()
-            for target in self._LINK.findall(path.read_text(encoding="utf-8")):
-                if target.startswith(self._SKIP_PREFIX):
-                    continue
-                if re.match(r"^[A-Za-z]:[\\/]", target):   # drive-letter path
-                    continue
-                cleaned = target.split("#", 1)[0]
-                if not cleaned:
-                    continue
-                # An untracked local doc does not resolve, even though it
-                # is sitting right there on this disk: a clone will not
-                # have it, and a link that only works on the maintainer's
-                # machine is the local-versus-CI split this gate must not
-                # develop. Resolve against the repository, not the disk.
-                if _relative_to_repo(path.parent / cleaned) \
-                        in UNTRACKED_LOCAL_DOCS or \
-                        cleaned in UNTRACKED_LOCAL_DOCS:
-                    out.append(f"{rel} -> {target}")
-                elif not (path.parent / cleaned).exists() and \
-                        not (REPO_ROOT / cleaned).exists():
-                    out.append(f"{rel} -> {target}")
-        return out
-
     def test_relative_links_point_at_something_that_exists(self) -> None:
-        broken = [x for x in self._unresolvable_links()
+        broken = [x for x in _unresolvable_links()
                   if x not in EXAMPLE_LINKS]
         self.assertEqual(
             broken, [],
@@ -1005,7 +1069,7 @@ class TestMarkdownCitationsResolve(unittest.TestCase):
         genuinely-broken link that happens to match a dead entry would be
         waved through.
         """
-        present = set(self._unresolvable_links())
+        present = set(_unresolvable_links())
         vanished = sorted(set(EXAMPLE_LINKS) - present)
         self.assertEqual(
             vanished, [],
@@ -1039,7 +1103,7 @@ ENGLISH_DOCS: tuple[str, ...] = (
     "docs/I18N.md",
     "docs/README.md",
     "tests/README.md",
-) + tuple(f"rules/{p.name}" for p in sorted((REPO_ROOT / "rules").glob("*.md")))
+) + _tracked_in("rules", ".md")
 
 # Documents written in Chinese by project decision (CLAUDE.md section 5:
 # commands / skills / this document are written in Chinese). Registered so
@@ -1049,12 +1113,8 @@ CHINESE_DOCS: tuple[str, ...] = _present((
     "README.zh.md",
     "docs/RULES.md",
     "agents/verifier.md",
-)) + tuple(
-    f"commands/{q.name}"
-    for q in sorted((REPO_ROOT / "commands").glob("*.md"))
-) + tuple(
-    d.relative_to(REPO_ROOT).as_posix()
-    for d in sorted((REPO_ROOT / "skills").rglob("SKILL.md"))
+)) + _tracked_in("commands", ".md") + tuple(
+    p for p in _tracked("/SKILL.md") if p.startswith("skills/")
 )
 
 # Neither, each for a stated reason.
@@ -1104,6 +1164,15 @@ def _cjk_outside_code(text: str) -> list[tuple[int, str]]:
 _CJK_CHAR = re.compile(r"[㐀-䶿一-鿿]")
 
 
+def _classifiable_markdown() -> tuple[str, ...]:
+    """Tracked markdown the language registries must cover.
+
+    Translations under a `zh/` directory are Chinese by definition and are
+    held to the English skeleton by `test_i18n_sync.py` instead.
+    """
+    return tuple(p for p in _tracked(".md") if "/zh/" not in p)
+
+
 class TestEnglishDocsAreEnglish(unittest.TestCase):
     """No Chinese prose in an English document, and vice versa."""
 
@@ -1115,17 +1184,7 @@ class TestEnglishDocsAreEnglish(unittest.TestCase):
         READMEs kept their glosses through v0.37 while the class was
         supposedly closed.
         """
-        tracked = set()
-        for path in REPO_ROOT.rglob("*.md"):
-            rel = path.relative_to(REPO_ROOT).as_posix()
-            if rel.startswith((".git/", "memory/", "node_modules/",
-                                ".pytest_cache/")):
-                continue
-            if rel in UNTRACKED_LOCAL_DOCS:
-                continue
-            if "/zh/" in rel:
-                continue          # translations, by definition Chinese
-            tracked.add(rel)
+        tracked = set(_classifiable_markdown())
         classified = set(ENGLISH_DOCS) | set(CHINESE_DOCS) | set(UNSCANNED_DOCS)
         unclassified = sorted(tracked - classified)
         self.assertEqual(
@@ -1177,7 +1236,6 @@ class TestEnglishDocsAreEnglish(unittest.TestCase):
         address included — and every gate above starts skipping a file
         that IS in the repository. The two halves have to hold together.
         """
-        import subprocess
         for rel in UNTRACKED_LOCAL_DOCS:
             with self.subTest(doc=rel):
                 tracked = subprocess.run(
@@ -1216,6 +1274,56 @@ class TestEnglishDocsAreEnglish(unittest.TestCase):
             wrong, [],
             f"registered as Chinese but barely contains any: {wrong}",
         )
+
+
+class TestDocGatesEnumerateTheIndex(unittest.TestCase):
+    """The scanners see what a clone sees: the git index, not this disk.
+
+    v0.40. Three scanners walked the working tree with skip lists that had
+    learned `.git`, `.ce`, `memory`, `node_modules`, `__pycache__` and
+    `.pytest_cache` one incident at a time; a machine with another plugin's
+    21 ignored markdown files under `.ccm/` was red while CI and a cloud
+    checkout were green (the identifier scan cited `E01` and `IGNORECASE`
+    from session notes; the classification check wanted 21 files
+    registered). The probe below plants an untracked file and requires
+    every enumeration to be blind to it — an assertion that could not be
+    stated while the enumerations were `rglob`.
+    """
+
+    def test_the_index_is_non_empty_and_holds_the_expected_files(self) -> None:
+        """Vacuity guard: an empty document set passes every scan."""
+        self.assertIn("README.md", _tracked(".md"))
+        self.assertIn("hooks/scripts/read_guard.py", _tracked(".py"))
+        self.assertIn("hooks/scripts", _tracked_dirs())
+        self.assertIn(".", _tracked_dirs())
+
+    def test_an_untracked_file_on_disk_is_invisible_to_every_scanner(self) -> None:
+        probe_dir = Path(tempfile.mkdtemp(prefix=".cce-probe-", dir=REPO_ROOT))
+        try:
+            # Basenames no tracked file shares (demo/paygate/probe.py exists).
+            md = probe_dir / "cce_untracked_probe.md"
+            md.write_text(
+                "`NO_SUCH_CONSTANT_ZZ` and [a link](no-such-target.md) "
+                "and 一句中文散文\n",
+                encoding="utf-8")
+            (probe_dir / "cce_untracked_probe.py").write_text(
+                "PROBE_ONLY_NAME_ZZ = 1\n", encoding="utf-8")
+            rel = md.relative_to(REPO_ROOT).as_posix()
+            self.assertTrue(md.is_file(), "the probe was not written")
+
+            self.assertNotIn(rel, _tracked(".md"))
+            self.assertNotIn(rel, _identifier_scan_files())
+            self.assertNotIn("NO_SUCH_CONSTANT_ZZ", _undefined_identifiers())
+            self.assertEqual(
+                [x for x in _unresolvable_links() if x.startswith(rel + " ->")],
+                [])
+            self.assertNotIn(rel, _classifiable_markdown())
+            self.assertNotIn(
+                "cce_untracked_probe.py",
+                {p.rsplit("/", 1)[-1] for p in _tracked(".py")})
+            self.assertNotIn("PROBE_ONLY_NAME_ZZ", _python_identifiers())
+        finally:
+            shutil.rmtree(probe_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -159,6 +159,44 @@ patch-marker set, the output format and the items with no rule-text
 counterpart, and stops restating the rules and the prompts; its description
 now counts eight sections, and its example reads "layer (a)–(i)".
 
+### Two test premises that held everywhere except on the machine the plugin was written on
+
+Running this branch on the maintainer's Windows machine gave five failures on
+a suite that was green in the cloud and would have been green on CI. Both
+causes are a test taking ambient machine state for an empty room — the
+v0.38.3 class (a test that encoded the maintainer's directory layout),
+pointing the other way. Neither is a hook defect; both are fixed in the
+test, by changing the gate's mechanism rather than adding the offending name
+to a list.
+
+- `tests/test_doc_sync.py` enumerated "the repository's documents" by walking
+  the working tree, with three skip lists of directory names (`.git`, `.ce`,
+  `memory`, `node_modules`, `__pycache__`, `.pytest_cache` — no two lists
+  alike, each name a past incident patched by name). Another plugin keeps 21
+  ignored markdown files under `.ccm/` on this machine, so the identifier
+  check cited `E01` and `IGNORECASE` out of session notes and the
+  language-registry check demanded 21 files be registered. Every enumeration
+  now asks `git ls-files` once and derives from that: the identifier scan,
+  the Python definitions it resolves against, the structure-tree ghost check,
+  the language registries and the link resolver — which resolves targets
+  against the index too, so a link that works only because an ignored file
+  happens to be on this disk fails here exactly as it would in a clone, and
+  the by-name `CLAUDE.md` exception of v0.38.2 becomes a consequence of the
+  rule instead of a special case. `_tracked` raises when git lists nothing,
+  because an empty document set passes every scan; a twin plants an
+  untracked file inside the repository and requires every scanner to be
+  blind to it.
+- `tests/test_startup_cost.py` (new in this release) built its subprocess
+  environment from the real one, HOME included. `edicts.global_path()` is
+  `Path.home()` plus `.claude/cc-enforcer/edicts.toml`, and this machine keeps
+  one, so `bash_guard` and both injection paths loaded `tomllib` for a config
+  that genuinely exists, and the gate called that a regression. `setUp` now
+  points HOME and USERPROFILE at the empty temporary project, the isolation
+  `test_edicts.py` already used; a twin writes an `edicts.toml` into a home
+  the test controls and requires `tomllib` to appear, so the negative checks
+  are known not to be vacuous and the home the hooks consult is known to be
+  the one the test sets.
+
 ### Decisions recorded, not made
 
 - `收敛` / `重触发` / `边界用例` / `反向用例` count as evidence for layer (a) as
@@ -172,7 +210,7 @@ now counts eight sections, and its example reads "layer (a)–(i)".
 - `CHANGELOG.md` carries two `## [0.11.0]` headings (the first is a roadmap
   note recorded at the time); left as history.
 
-### Tests — 749 → 765
+### Tests — 749 → 768
 
 ---
 

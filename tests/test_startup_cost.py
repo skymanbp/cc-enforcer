@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,15 @@ class TestCommonPathsStayLight(unittest.TestCase):
         self.env["CLAUDE_PROJECT_DIR"] = self.tmp
         self.env.pop("CC_ENFORCER_AUTO_GC_DAYS", None)
         self.env.pop("CLAUDE_ENV_FILE", None)
+        # And an empty home. `edicts.global_path()` is `Path.home()` plus
+        # `.claude/cc-enforcer/edicts.toml`; a maintainer who keeps global
+        # edicts (this repository's does) would otherwise watch every hook
+        # load `tomllib` for a config that genuinely exists, and this class
+        # call it a regression on that one machine while CI stays green.
+        # Both spellings, because `Path.home()` reads USERPROFILE on Windows
+        # and HOME elsewhere — the isolation `test_edicts.py` already uses.
+        self.env["HOME"] = self.tmp
+        self.env["USERPROFILE"] = self.tmp
 
     def _check(self, script: str, args: list[str], payload: dict,
                also_forbidden: set[str], expect_stdout: bool) -> None:
@@ -130,6 +140,40 @@ class TestCommonPathsStayLight(unittest.TestCase):
              "last_assistant_message": "Still looking; no conclusion yet."},
             also_forbidden={"lib.sync_gate"},
             expect_stdout=False,
+        )
+
+    def test_a_config_in_the_controlled_home_does_load_the_parser(self) -> None:
+        """The twin: an edicts.toml in the home this class controls, and
+        `tomllib` must appear in the inventory.
+
+        Two things it proves. The negative checks above are not vacuous —
+        the `-X importtime` inventory can see the parser when it loads. And
+        the home the hooks consult is the one `setUp` points them at: this
+        is the exact shape of the false red this class produced before
+        `setUp` isolated HOME, reproduced on purpose.
+        """
+        from lib import projroot
+        home = tempfile.mkdtemp(prefix="ccenf-home-")
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        cfg = projroot.config_file(Path(home), "edicts.toml")
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            '[[edicts]]\nid = "E01"\ntext = "probe"\nseverity = "should"\n'
+            'deny_bash = ["never-typed-here"]\n',
+            encoding="utf-8")
+        env = dict(self.env, HOME=home, USERPROFILE=home)
+        names, proc = _imported_modules(
+            "bash_guard.py", [],
+            {"session_id": "t", "hook_event_name": "PreToolUse",
+             "tool_name": "Bash", "tool_input": {"command": "git status --short"}},
+            env, self.tmp)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-500:])
+        self.assertIn(
+            "tomllib", names,
+            "a config exists in the controlled home and the parser did not "
+            "load: either the hooks read a different home than this class "
+            "isolates, or the inventory cannot see tomllib at all — in which "
+            "case every negative check above is vacuous",
         )
 
 
