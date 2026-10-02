@@ -31,6 +31,7 @@ Public API
 ``tokenize(command)``        shell tokens, or None if unparseable
 ``segments(command)``        list of argv lists, split on shell separators
 ``command_name(argv)``       lowercased basename of argv[0]
+``effective_argv(argv)``     argv with precommand wrappers (`sudo`, `env`, …) removed
 ``git_subcommand(argv)``     (subcommand, remaining_args) for a git argv
 ``python_script_arg(argv)``  the script path a python argv executes, else None
 """
@@ -137,11 +138,13 @@ def segments(command: str, windows: bool | None = None,
     expanded: list[list[str]] = []
     for argv in out:
         expanded.append(argv)
-        if command_name(argv) not in _SHELL_NAMES:
+        # `sudo bash -c "…"` runs a shell too: look past the wrappers.
+        inner = effective_argv(argv)
+        if command_name(inner) not in _SHELL_NAMES:
             continue
-        for i in range(1, len(argv) - 1):
-            if argv[i] == "-c":
-                expanded.extend(segments(argv[i + 1], windows, _depth + 1))
+        for i in range(1, len(inner) - 1):
+            if inner[i] == "-c":
+                expanded.extend(segments(inner[i + 1], windows, _depth + 1))
                 break
     return expanded
 
@@ -151,6 +154,58 @@ def command_name(argv: list[str]) -> str:
     if not argv:
         return ""
     return os.path.basename(argv[0].replace("\\", "/")).lower()
+
+
+# Precommand wrappers: each runs the command that follows its own options,
+# so `sudo rm -rf /` executes `rm -rf /`. A check that reads argv[0] sees
+# only the wrapper. Value is the set of the wrapper's options that consume
+# a SEPARATE following operand; any other `-x` token is a plain flag.
+_WRAPPERS: dict[str, frozenset[str]] = {
+    "sudo": frozenset({"-u", "-g", "-p", "-C", "-D", "-r", "-t", "-U", "-T"}),
+    "doas": frozenset({"-u", "-C"}),
+    "env": frozenset({"-u", "-C", "--unset", "--chdir"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+    "nohup": frozenset(),
+    "time": frozenset({"-f", "-o", "--format", "--output"}),
+    "command": frozenset(),
+    "exec": frozenset({"-a"}),
+}
+# `NAME=value` before a command is an assignment for that command only.
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_MAX_WRAPPER_DEPTH = 8
+
+
+def effective_argv(argv: list[str]) -> list[str]:
+    """The argv a segment really executes, past wrappers and assignments.
+
+    `FOO=1 sudo -u root env BAR=2 git push -f` -> `['git', 'push', '-f']`.
+    Returns `argv` itself when nothing wraps it, and `[]` when a wrapper
+    is given no command (`sudo -v`, a bare `env`).
+    """
+    i, n = 0, len(argv)
+    for _ in range(_MAX_WRAPPER_DEPTH):
+        while i < n and _ASSIGNMENT.match(argv[i]):
+            i += 1
+        if i >= n:
+            return []
+        name = command_name(argv[i:i + 1])
+        if name.endswith(".exe"):
+            name = name[:-4]
+        value_opts = _WRAPPERS.get(name)
+        if value_opts is None:
+            return argv if i == 0 else argv[i:]
+        i += 1
+        if name == "command" and i < n and argv[i] in ("-v", "-V"):
+            return []         # `command -v git` looks a name up, runs nothing
+        while i < n:
+            tok = argv[i]
+            if tok == "--":
+                i += 1
+                break
+            if not tok.startswith("-") or tok == "-":
+                break
+            i += 2 if tok in value_opts else 1
+    return argv[i:]
 
 
 # git global options that consume a SEPARATE following value. The

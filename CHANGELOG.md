@@ -16,6 +16,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 Nothing planned. The roadmap is empty by decision, not by neglect — see
 v0.32.1 for why its last two entries were retired rather than carried.
 
+### Bash guard: a wrapper no longer hides the command
+
+Every built-in Bash check read `argv[0]`, so `sudo chmod 777 x`,
+`sudo rm -rf /`, `sudo git push -f`, `nohup git push -f`,
+`GIT_TRACE=1 git push --force` and `sudo bash -c "git push -f"` were all
+allowed (only the any-position flags such as `--no-verify` were caught).
+`lib/shellcmd.effective_argv` now resolves the argv a segment really runs —
+past `VAR=value` prefixes and the `sudo` / `doas` / `env` / `nice` /
+`nohup` / `time` / `command` / `exec` wrappers, with their value-taking
+options — and every deny check and the nested-shell recursion read it. A
+strictness increase: each case above is now denied, and each has an allow
+twin in the matrix (`sudo git push origin main`, `sudo rm -rf /tmp/x`,
+`sudo echo git push -f`, `command -v git`). The register-as-read hatch is
+unchanged: it still demands the bare invocation.
+
+### Edict deny names the file the edict came from
+
+The deny text said "a project-level edict defined in
+.claude/cc-enforcer/edicts.toml" whatever file had loaded, including the
+personal global one. It now names the resolved path. 773 → 779 tests.
+
 ### Documentation: a full fact-check against the v0.41.0 code
 
 Every reference surface (both READMEs, `docs/`, `rules/` + `zh/`,

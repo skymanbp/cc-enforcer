@@ -534,8 +534,7 @@ _DENY_REASON_TEMPLATES = {
         "Target: {target}\n"
         "Matched pattern: {pattern!r}\n\n"
         "Snippet:\n{snippet}\n\n"
-        "This is a project-level edict defined in "
-        ".claude/cc-enforcer/edicts.toml. It has severity = 'must',\n"
+        "This edict is defined in {source}. It has severity = 'must',\n"
         "so the violation is physically blocked (not a soft reminder).\n\n"
         "To proceed:\n"
         "  • Comply with the edict (recommended), or\n"
@@ -551,8 +550,7 @@ _DENY_REASON_TEMPLATES = {
         "Target: {target}\n"
         "Matched pattern: {pattern!r}\n\n"
         "Snippet:\n{snippet}\n\n"
-        "This is a project-level edict defined in "
-        ".claude/cc-enforcer/edicts.toml. It has severity = 'must',\n"
+        "This edict is defined in {source}. It has severity = 'must',\n"
         "which means the violation is physically blocked (not a soft\n"
         "reminder).\n\n"
         "To proceed:\n"
@@ -580,7 +578,12 @@ def deny_reason(
     ed = hit.edict
     note_line = f"Note: {ed.note}\n" if ed.note else ""
     tmpl = _DENY_REASON_TEMPLATES.get(_resolved_lang(lang), _DENY_REASON_TEMPLATES["en"])
+    # The file the hit was loaded from: `load()` reads exactly the one
+    # `edicts_path()` resolves, so the same resolver names it here. It may
+    # be the personal global file, which "project-level" would misstate.
+    source = edicts_path()
     return tmpl.format(
+        source=source if source is not None else "edicts.toml",
         id=ed.id,
         text=ed.text,
         note_line=note_line,

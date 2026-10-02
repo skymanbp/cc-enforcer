@@ -621,6 +621,33 @@ class TestManageCLIGlobalFlag(_ManageCLIBase):
         self.assertEqual(rc, 0)
         self.assertIn("Removed", out)
 
+    def _bash_deny_reason(self, command: str) -> str:
+        rc, out, err = run_hook(
+            [BASH_GUARD],
+            stdin_payload={
+                "session_id": "t", "hook_event_name": "PreToolUse",
+                "tool_name": "Bash", "tool_input": {"command": command},
+            },
+            env_overrides=self.env,
+        )
+        self.assertIsNotNone(out, msg=err)
+        return out["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def test_deny_names_the_global_file_a_global_edict_came_from(self) -> None:
+        self._run("add", "E01", "g", "--global", "--deny-bash", "forbidden-cmd")
+        reason = self._bash_deny_reason("forbidden-cmd now")
+        global_f = self.home / ".claude" / "cc-enforcer" / "edicts.toml"
+        self.assertIn(str(global_f), reason)
+        self.assertNotIn("project-level", reason)
+
+    def test_deny_names_the_project_file_a_project_edict_came_from(self) -> None:
+        # Twin: with a project file the same text names the project path.
+        self._run("add", "E01", "p", "--deny-bash", "forbidden-cmd")
+        reason = self._bash_deny_reason("forbidden-cmd now")
+        proj_f = self.proj / ".claude" / "cc-enforcer" / "edicts.toml"
+        self.assertIn(str(proj_f), reason)
+        self.assertNotIn(str(self.home), reason)
+
     def test_global_remove_restricted_to_global_file(self) -> None:
         # E01 exists only in project; remove --global should fail.
         self._run("add", "E01", "p", "--deny-bash", "x")

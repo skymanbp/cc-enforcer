@@ -91,7 +91,7 @@ are bypassable **by saying why**, never by accident.
 | **Hardcoded secrets** | Secret-named literal, PEM private-key header, `AKIA…`, `ghp_…` / `xox…` / `AIza…`, `user:pass@host` URLs. | Env var, marked placeholder, or why-comment. |
 | **Machine-specific paths** | `C:\Users\…`, `/home/<user>/`, `/Users/<user>/`, `$HOME`, `%USERPROFILE%`, quoted `~/…`. | Derive at runtime, or why-comment. Prose docs and lockfiles exempt. |
 | **Rolling patches** | The 4th small edit (< 200 chars **and** ≤ 10 lines) to one file with no systematic rewrite in between. | One rewrite of ≥ 50 lines / ≥ 1500 chars / **≥ 30% of that file**. Net reductions and version bumps are never counted at all — see §5. |
-| **Dangerous shell** | `--no-verify`, `--no-gpg-sign`, `git push --force` (not `--force-with-lease`), `chmod 777`, `git rebase --skip`, `--break-system-packages`, `rm -rf` on `/`, a system root, `/tmp` itself, `$HOME` or `~`. | Fix the hook failure / permission / conflict instead. |
+| **Dangerous shell** | `--no-verify`, `--no-gpg-sign`, `git push --force` (not `--force-with-lease`), `chmod 777`, `git rebase --skip`, `--break-system-packages`, `rm -rf` on `/`, a system root, `/tmp` itself, `$HOME` or `~` — also behind `sudo` / `env` / `VAR=…`. | Fix the hook failure / permission / conflict instead. |
 | **Your own edicts** | Any regex you registered as a `must` edict. | Only you can relax it. |
 
 ### Feature 3 — The done-claim gate (`Stop` → BLOCK, nine layers)
@@ -618,7 +618,7 @@ cc-enforcer/
 │   ├── run_demo.py              #   drives the real hooks, captures both transcripts
 │   ├── render_svg.py            #   transcript -> terminal SVG, zero dependencies
 │   └── out/*.svg                #   the committed images, pinned by tests/test_demo.py
-└── tests/                       # 773 black-box + unit tests (python -m unittest discover tests)
+└── tests/                       # 779 black-box + unit tests (python -m unittest discover tests)
     │                            # each file is named after what it covers — see tests/README.md
     ├── _helpers.py              #   shared run_hook(...) subprocess fixture
     ├── test_<hook>.py           #   black-box subprocess tests, one per hook entry point
@@ -631,7 +631,7 @@ cc-enforcer/
     └── test_audit_*.py          #   per-audit-round regression suites (v026 x2, v027)
 ```
 
-All scripts are covered by **773 tests** in [`tests/`](tests/) — black-box
+All scripts are covered by **779 tests** in [`tests/`](tests/) — black-box
 subprocess tests that launch each hook exactly as Claude Code does, plus unit
 tests for the shared models and the four drift gates.
 

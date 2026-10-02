@@ -1,6 +1,6 @@
 # Tests — index
 
-**773 tests, 21 files, zero dependencies.** Every test file appears below with
+**779 tests, 21 files, zero dependencies.** Every test file appears below with
 what it covers. Nothing else in the repo enumerates the suite.
 
 ## Run
@@ -42,7 +42,7 @@ all behave differently when a script is imported instead of executed.
 |---|---:|---|
 | [`test_inject_context.py`](test_inject_context.py) | 35 | [`inject_context.py`](../hooks/scripts/inject_context.py) — payload shape for both events, language switching and fallback, UTF-8 / CJK survival, the reply-schema contract, the 10,000-character output cap with a 120-character install root and three real edicts for all four prompts, whole-edict elision with a true count, the self-locating header naming the root once, the per-turn reminder's size caps and its constraint set derived from the guards, and the chrome-less per-turn edict table. |
 | [`test_read_guard.py`](test_read_guard.py) | 108 | [`read_guard.py`](../hooks/scripts/read_guard.py) — the read-before-edit allow/deny matrix, the rule 09 / 10 / 11 content detectors, the rolling-patch counter against a realistically sized target, path normalisation, `edited_files` recording, 12-way concurrent state writes, fail-open, and the plugin's ability to rewrite its own files. |
-| [`test_bash_guard.py`](test_bash_guard.py) | 21 | [`bash_guard.py`](../hooks/scripts/bash_guard.py) — the bypass-pattern catalog, force-push spellings, the register-as-read hatch (chaining and command-position rules), event gating, fail-open. |
+| [`test_bash_guard.py`](test_bash_guard.py) | 21 | [`bash_guard.py`](../hooks/scripts/bash_guard.py) — the bypass-pattern catalog, force-push spellings, the register-as-read hatch (chaining and command-position rules), precommand wrappers (`sudo` / `env` / `VAR=…`) with their allow twins, event gating, fail-open. |
 | [`test_stop_guard.py`](test_stop_guard.py) | 155 | [`stop_guard.py`](../hooks/scripts/stop_guard.py) (entry) and [`stop_guard_impl.py`](../hooks/scripts/stop_guard_impl.py) (body) — all nine layers, the status-table format, per-layer grace, production-shape payloads (no `turn_count`), the `last_assistant_message` field ahead of the transcript fallback, the transcript tail read (a 60 MB file costs a few windows; 256-byte windows agree with a whole-file scan), tldr presence and display-column length, and that naming a rule-06 check — in either language — is not evidence until output accompanies it. |
 
 ### Shared modules and auxiliary scripts
@@ -53,7 +53,7 @@ all behave differently when a script is imported instead of executed.
 | [`test_hookio.py`](test_hookio.py) | 21 | [`lib/hookio.py`](../hooks/scripts/lib/hookio.py) — the payload-decoding boundary, plus the encoding contract at all four hook entries end to end under a forced `cp936` stdin, with the refusal twin (non-UTF-8 bytes raise rather than being rewritten) and a liveness check that the reproduction still bites. |
 | [`test_messages.py`](test_messages.py) | 17 | [`lib/messages.py`](../hooks/scripts/lib/messages.py) and the two catalogs — the English catalog carries zero CJK, the Chinese one is actually translated, and `CC_ENFORCER_LANG` changes what a guard prints end to end. Key-set and placeholder parity live in `test_i18n_sync.py`. |
 | [`test_envfile.py`](test_envfile.py) | 11 | [`lib/envfile.py`](../hooks/scripts/lib/envfile.py) — the dedupe model (last occurrence wins, order survives, refusal twins for non-export lines and open quotes) plus black-box SessionStart runs. |
-| [`test_edicts.py`](test_edicts.py) | 64 | [`lib/edicts.py`](../hooks/scripts/lib/edicts.py) loading / injection / DENY / severity gating, file encoding tolerance, and the [`manage_edicts.py`](../hooks/scripts/manage_edicts.py) CLI including its TOML round-trip, cwd fallback and the single-definition pin on the `--global` path. |
+| [`test_edicts.py`](test_edicts.py) | 66 | [`lib/edicts.py`](../hooks/scripts/lib/edicts.py) loading / injection / DENY / severity gating, file encoding tolerance, and the [`manage_edicts.py`](../hooks/scripts/manage_edicts.py) CLI including its TOML round-trip, cwd fallback, the single-definition pin on the `--global` path, and a deny that names the file its edict came from. |
 | [`test_sync_gate.py`](test_sync_gate.py) | 19 | [`lib/sync_gate.py`](../hooks/scripts/lib/sync_gate.py) — config resolution order, TOML tolerance, any-vs-all mode, `./` glob normalisation, project-relative boundaries. |
 | [`test_editscale.py`](test_editscale.py) | 40 | [`lib/editscale.py`](../hooks/scripts/lib/editscale.py) — the change-scale model: the absolute classifier, the 30 %-coverage route with both axes and both boundaries, net reduction, the bookkeeping allowlist in code vs prose, every exemption with its refusal twin. |
 | [`test_gc_state.py`](test_gc_state.py) | 19 | [`gc_state.py`](../hooks/scripts/gc_state.py) — argument validation, dry-run vs apply, threshold semantics, auto-GC on SessionStart. |
@@ -84,7 +84,7 @@ a literal fixture would make the module unwritable by any agent running it.
 
 | File | Tests | Round |
 |---|---:|---|
-| [`test_audit_v026_models.py`](test_audit_v026_models.py) | 93 | The shared judgement models (`TestSrclex` / `TestMdctx` / `TestShellcmd`) plus one regression class per confirmed defect of that round. |
+| [`test_audit_v026_models.py`](test_audit_v026_models.py) | 97 | The shared judgement models (`TestSrclex` / `TestMdctx` / `TestShellcmd`) plus one regression class per confirmed defect of that round. |
 | [`test_audit_v026_round2.py`](test_audit_v026_round2.py) | 54 | Sixteen parallel read-only reviews; each test pins a defect reproduced against the real code before anything was changed. |
 | [`test_audit_v027_contracts.py`](test_audit_v027_contracts.py) | 12 | Three items recorded as "known, not fixed", each closed as a deliberate contract change. |
 

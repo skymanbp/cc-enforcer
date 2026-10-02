@@ -222,7 +222,9 @@ Deny output, both guards:
 The command is tokenised once by [`lib/shellcmd.py`](../hooks/scripts/lib/shellcmd.py)
 into shell segments (`&&`, `||`, `;`, `|`, newlines, `$(…)`, backticks,
 subshells; it recurses into a shell's `-c` operand) and every built-in check
-works on argv, so `echo git commit --no-verify` executes nothing and is allowed while
+works on the argv each segment really runs — past `VAR=value` prefixes and
+the `sudo` / `doas` / `env` / `nice` / `nohup` / `time` / `command` / `exec`
+wrappers, so `sudo rm -rf /` is judged as `rm` — so `echo git commit --no-verify` executes nothing and is allowed while
 `$(git push --force)` really runs and is denied. A `must` edict's `deny_bash`
 regex is the exception: it is matched against the raw command string. Checks run in this order, and
 all of them before the registration step, so a command that is going to be
@@ -331,7 +333,7 @@ which are English-only.
 | `messages.py` + `messages_en.py` + `messages_zh.py` | Every string a guard prints, resolved per key for the active language; the English catalog is the skeleton. |
 | `srclex.py` | Is this `#` a comment, a docstring or data? Where does this literal end? Which physical lines form one logical line? A tolerant lexer, not a parser — an Edit's `new_string` is rarely a complete syntactic unit. |
 | `mdctx.py` | Markdown line context: fence state and info string, blockquote depth (including under list items and lazy continuation), and the two attribution verdicts layer (h) and the sync marker use. |
-| `shellcmd.py` | A shell command as segments of argv, the real git subcommand past global options, and a Python interpreter's script operand. |
+| `shellcmd.py` | A shell command as segments of argv, the argv a segment really runs past precommand wrappers (`sudo`, `env`, `VAR=…`), the real git subcommand past global options, and a Python interpreter's script operand. |
 | `editscale.py` | How big an edit is relative to the file it edits, plus the two shapes that are never a rolling patch (net reduction, bookkeeping). |
 | `state.py` | Per-session state: reads, baselines, counters, flags, the Stop record — with the cross-process lock and the atomic save (§2.7). |
 | `tomlio.py` | The hardened TOML reader (BOM, encoding, parse errors → diagnostics) and the writer primitives the two config CLIs share; imports `tomllib` on first use. |

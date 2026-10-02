@@ -100,6 +100,20 @@ CASES: list[tuple[str, str, str, str | None]] = [
     ("rm -rf /tmp/foo (allow)", "rm -rf /tmp/foo", "allow", None),
     ("rm -rf relative path (allow)", "rm -rf build/", "allow", None),
     ("rm without -r (allow)", "rm /etc/myfile", "allow", None),
+
+    # ----- precommand wrappers: the checks read the command they run -----
+    ("sudo chmod 777", "sudo chmod 777 file.txt", "deny", "777"),
+    ("sudo rm -rf /", "sudo rm -rf /", "deny", "rm -rf"),
+    ("sudo git push -f", "sudo git push -f origin main", "deny", "force"),
+    ("VAR= prefix git push --force", "GIT_TRACE=1 git push --force", "deny", "force"),
+    ("nohup git push -f", "nohup git push -f origin main", "deny", "force"),
+    ("stacked wrappers chmod", "sudo -u root env A=1 nice -n 5 chmod -R 777 /srv", "deny", "777"),
+    ("sudo bash -c force push", 'sudo bash -c "git push -f origin main"', "deny", "force"),
+    ("sudo git push (allow)", "sudo git push origin main", "allow", None),
+    ("sudo rm -rf /tmp/x (allow)", "sudo rm -rf /tmp/x", "allow", None),
+    ("sudo chmod 755 (allow)", "sudo chmod 755 file.txt", "allow", None),
+    ("sudo echo force push (allow)", "sudo echo git push -f", "allow", None),
+    ("command -v looks up only (allow)", "command -v git", "allow", None),
 ]
 
 

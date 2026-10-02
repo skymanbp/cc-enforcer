@@ -260,6 +260,7 @@ def _detect_force_push(cmd: str, segments: list[list[str]] | None = None) -> dic
     """
     hit = False
     for argv in (shellcmd.segments(cmd) if segments is None else segments):
+        argv = shellcmd.effective_argv(argv)   # `sudo git push -f` is git
         if shellcmd.command_name(argv) not in ("git", "git.exe"):
             continue
         subcommand, args = shellcmd.git_subcommand(argv)
@@ -587,8 +588,10 @@ def main() -> int:
         # once here and handed to every later check (v0.40): the same
         # command used to be split three times, and on a large heredoc
         # each split costs about as much as the rest of the hook.
+        # Each check reads the argv a segment really executes, past any
+        # `sudo` / `env` / `VAR=…` wrapper: `sudo rm -rf /` runs `rm`.
         segments = shellcmd.segments(command)
-        for argv in segments:
+        for argv in map(shellcmd.effective_argv, segments):
             if not argv:
                 continue
             if shellcmd.command_name(argv) in _INERT_COMMANDS:

@@ -194,6 +194,23 @@ class TestShellcmd(unittest.TestCase):
         segs = shellcmd.segments("a b && c d ; e")
         self.assertEqual([s[0] for s in segs], ["a", "c", "e"])
 
+    def test_effective_argv_strips_wrappers_and_assignments(self) -> None:
+        argv = ["FOO=1", "sudo", "-u", "root", "env", "BAR=2", "nice", "-n",
+                "5", "git", "push", "-f"]
+        self.assertEqual(shellcmd.effective_argv(argv), ["git", "push", "-f"])
+
+    def test_effective_argv_leaves_an_unwrapped_argv_alone(self) -> None:
+        argv = ["git", "push", "origin", "main"]
+        self.assertIs(shellcmd.effective_argv(argv), argv)
+
+    def test_effective_argv_of_a_wrapper_with_no_command_is_empty(self) -> None:
+        self.assertEqual(shellcmd.effective_argv(["sudo", "-v"]), [])
+        self.assertEqual(shellcmd.effective_argv(["command", "-v", "git"]), [])
+
+    def test_segments_recurse_into_a_wrapped_shell(self) -> None:
+        segs = shellcmd.segments('sudo bash -c "git push -f"')
+        self.assertIn(["git", "push", "-f"], segs)
+
     def test_git_subcommand_skips_global_value_options(self) -> None:
         argv = ["git", "-C", "/repo", "push", "--force"]
         self.assertEqual(shellcmd.git_subcommand(argv)[0], "push")

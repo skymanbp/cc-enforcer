@@ -86,7 +86,7 @@ LLM 编程助手（Claude Code、Cursor、Copilot、Cline、Aider……）会掉
 | **硬编码密钥** | 密钥命名字面量、PEM 私钥头、`AKIA…`、`ghp_…` / `xox…` / `AIza…`、`user:pass@host` URL。 | 环境变量、标注过的占位符，或 why 注释。 |
 | **机器相关路径** | `C:\Users\…`、`/home/<user>/`、`/Users/<user>/`、`$HOME`、`%USERPROFILE%`、引号内 `~/…`。 | 运行时派生，或 why 注释。散文文档与锁文件豁免。 |
 | **滚动补丁** | 同一文件第 4 次小幅 Edit（< 200 字符**且** ≤ 10 行）而中间没有一次系统式重写。 | 一次 ≥ 50 行 / ≥ 1500 字符 / **≥ 该文件 30%** 的重写。净减少改动与升版本号**根本不计数**——见第五节。 |
-| **危险 shell** | `--no-verify`、`--no-gpg-sign`、`git push --force`（非 `--force-with-lease`）、`chmod 777`、`git rebase --skip`、`--break-system-packages`、`rm -rf` 打到 `/`、系统根目录、`/tmp` 本身、`$HOME` 或 `~`。 | 去修钩子失败 / 权限 / 冲突的根因。 |
+| **危险 shell** | `--no-verify`、`--no-gpg-sign`、`git push --force`（非 `--force-with-lease`）、`chmod 777`、`git rebase --skip`、`--break-system-packages`、`rm -rf` 打到 `/`、系统根目录、`/tmp` 本身、`$HOME` 或 `~`——套在 `sudo` / `env` / `VAR=…` 后面也一样。 | 去修钩子失败 / 权限 / 冲突的根因。 |
 | **你自己的圣旨** | 任何你登记为 `must` 的正则。 | 只有你能放宽它。 |
 
 ### 功能三 —— 完成声明闸门（`Stop` → BLOCK，九层）
@@ -563,7 +563,7 @@ cc-enforcer/
 │   ├── run_demo.py              #   驱动真实钩子，捕获两份 transcript
 │   ├── render_svg.py            #   transcript → 终端风格 SVG，零依赖
 │   └── out/*.svg                #   已提交的图片，由 tests/test_demo.py 钉住
-└── tests/                       # 773 个测试（python -m unittest discover tests）
+└── tests/                       # 779 个测试（python -m unittest discover tests）
     │                            # 每个文件以它覆盖的对象命名 —— 见 tests/README.md
     ├── _helpers.py              #   共享 run_hook(...) 子进程夹具
     ├── test_<hook>.py           #   黑盒子进程测试，每个钩子入口一个
@@ -576,7 +576,7 @@ cc-enforcer/
     └── test_audit_*.py          #   历次审计轮的回归套件（v026 ×2、v027）
 ```
 
-全部脚本由 [`tests/`](tests/) 里的 **773 个测试**覆盖 —— 黑盒子进程测试完全按
+全部脚本由 [`tests/`](tests/) 里的 **779 个测试**覆盖 —— 黑盒子进程测试完全按
 Claude Code 的方式拉起每个钩子，外加共享模型的单元件与四道漂移门。
 
 ---
