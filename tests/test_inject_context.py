@@ -199,7 +199,7 @@ class TestInjectContextChinese(unittest.TestCase):
             "重触发原症状",
             "是不是真的解决了问题",
             "有没有更好的解决方法",
-            "改动是否经过验证",
+            "哪些没验",
             "验证是否合理",
         ):
             self.assertIn(needle, ctx, msg=f"session-start prompt missing {needle!r}")

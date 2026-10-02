@@ -16,6 +16,47 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 Nothing planned. The roadmap is empty by decision, not by neglect — see
 v0.32.1 for why its last two entries were retired rather than carried.
 
+### Documentation: a full fact-check against the v0.41.0 code
+
+Every reference surface (both READMEs, `docs/`, `rules/` + `zh/`,
+`prompts/` + `zh/`, `commands/`, the skills, the test and demo indexes, the
+CI and sync-gate comments) was re-checked claim by claim against the code.
+The contract-level corrections:
+
+- **The reply schema's own `re-trigger` example did not count as layer-(a)
+  evidence.** `re-trigger: "$ <cmd> → …"` puts the `$` inside a quoted
+  value, and layer (a) accepts a `$ ` only at the start of a line. The
+  template is now a block scalar (`re-trigger: |` then `$ <cmd>` on its own
+  line), which does count; rule 06 and the per-turn reminder now name the
+  real evidence shapes, including that a fence with a language tag is not
+  one by itself.
+- **Global edicts are a fallback, not a layer.** `EDICTS.md`, the edict
+  command and both READMEs said or implied that project and global edicts
+  merge; the loader reads exactly one file, and a project `edicts.toml`
+  shadows the global one entirely.
+- **Layer (i) is not pre-empted by a sync marker.** Several surfaces read as
+  if a `sync-check:` line avoided the block; a first violation always
+  blocks, and the marker settles only groups a previous block named.
+  Rule 12 and the checklist also now say that the reply schema's `yaml`
+  fence is where a marker *does* count.
+- **The status table lists rows (a)→(i)**; only the verdicts follow
+  evaluation order. ARCHITECTURE and both READMEs said the rows did.
+- **The zh layer-(b) plain-words line named `应该 / 可能` as hedges**, which
+  the hook deliberately does not match; it now matches the English line.
+- **The demo's Stop call now uses the production payload**
+  (`last_assistant_message`, no `turn_count`); the images are unchanged.
+- **README §6** is re-measured on v0.41.0 with all six scenarios. The old
+  tables predated the thin-shell split and labelled a non-edit Stop as "all
+  nine layers"; the before/after table was release history and is left to
+  v0.40.0.
+
+Smaller drift fixed in the same pass: the `rm -rf` target set, the prose
+exemption list, state-file quarantine, the maintenance passes running before
+the emit, §8 rows naming entries for code that lives in the `_impl.py`
+bodies, the message-catalog checks missing from `I18N.md` and the i18n
+command, and history narration moved out of reference docs.
+`test_doc_sync` now also derives the Chinese README's coverage-bar sample.
+
 ---
 
 ## [0.41.0] — 2026-09-24

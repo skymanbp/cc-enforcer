@@ -6,7 +6,7 @@ severity: must
 
 # Rule 12 — Repo-wide sync: co-update every reference
 
-**Enforced by:** `Stop` layer (i) — BLOCK when an edit turn touched a file matching a `when` glob of the project's `.claude/cc-enforcer/sync-gate.toml`, no `require` file was edited, and the reply carries no informed `sync-check:` / `同步核对:` line for that group (placeholders such as `n/a` / `无` / `-` count as absent; a marker inside a code fence or blockquote is a quotation, not a claim). Opt-in per project — no config file, no layer — and the loader fails open. Like every Stop layer, (i) is forgiven once per recovery sequence while the other layers stay live.
+**Enforced by:** `Stop` layer (i) — BLOCK when an edit turn touched a file matching a `when` glob of the project's `.claude/cc-enforcer/sync-gate.toml`, no `require` file was edited, and the reply carries no informed `sync-check:` / `同步核对:` line for that group (placeholders such as `n/a` / `无` / `-` count as absent; a marker inside a blockquote, or a code fence other than the reply schema's `yaml` block, is a quotation, not a claim). Opt-in per project — no config file, no layer — and the loader fails open. Like every Stop layer, (i) is forgiven once per recovery sequence while the other layers stay live.
 
 ## Principle
 
@@ -82,7 +82,8 @@ properties keep the hatch honest:
   answer per group, never one blanket sentence covering groups you never
   considered.
 - The marker must be *yours* and must *say something*: a marker inside a
-  code fence or a blockquote is quoted material, not your claim, and a
+  blockquote, or a code fence other than the reply schema's `yaml` block, is
+  quoted material, not your claim, and a
   placeholder value — `n/a`, `无`, `-`, or an empty one — is treated as
   absent. Only that bottom tier is refused: `sync-check: checked it` is
   equally empty and is still accepted, because refusing an honest report

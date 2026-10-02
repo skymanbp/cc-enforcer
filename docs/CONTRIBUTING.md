@@ -63,11 +63,9 @@ denied by it while working on it.
 
 ## Release checklist
 
-The end of a release is the **GitHub Release object**, not the tag. v0.22.1
-shipped twice-broken on exactly that: `marketplace.json`'s version fields
-never followed `plugin.json`, so installs still reported the previous version;
-and the tag was pushed while no Release was ever created, so the repository
-front page kept showing the old one as Latest. Walk it, do not recall it:
+The end of a release is the **GitHub Release object**, not the tag: without
+it the repository front page keeps showing the previous version as Latest.
+Walk it, do not recall it:
 
 1. `python -m unittest discover -s tests -p "test_version_sync.py" -v` — the
    version drift gate. `.claude-plugin/plugin.json` is the single authority;

@@ -6,7 +6,7 @@ severity: must
 
 # Rule 01 — Verify, don't guess
 
-**Enforced by:** `Stop` layer (b) — BLOCK when a first-person hedge (`I think` / `I believe` / `maybe` / `probably` / `我觉得` / `应该是`) sits within 50 characters of a done-claim; `Stop` layer (g) — BLOCK when the reply claims to have edited or created a file whose mtime never moved this turn. The rest of this rule is text-level discipline.
+**Enforced by:** `Stop` layer (b) — BLOCK when a first-person hedge (`I think` / `I believe` / `maybe` / `probably` / `我觉得` / `应该是`) sits within 50 characters of a done-claim; `Stop` layer (g) — on an edit turn, BLOCK when the reply says it edited a file whose mtime has not moved since the session first saw it, or says it created a file that does not exist. The rest of this rule is text-level discipline.
 
 ## Principle
 

@@ -42,7 +42,7 @@ MESSAGES: dict[str, str] = {
   • 删掉完成声明，明说「尚未确认」，让用户自己决定要不要发。
 
 含糊词不是修辞客套 —— 它表示你自己也没底。有底就写清楚；没底就直说。""",
-    'stop.tldr.b': '你一边说修好了一边又「应该 / 可能」——删掉含糊词，或明说还没验。',
+    'stop.tldr.b': '你一边说修好了一边又含糊其辞——删掉含糊词，或明说还没验。',
     'stop.fail_note.b': '完成声明旁有含糊词',
     'stop.layer_label.b': 'rule 01 —— 完成声明旁的含糊词',
     'stop.layer_keyword.b': 'rule 01 + hedge',

@@ -7,7 +7,7 @@
 
 - **Edit/Write → `PreToolUse` DENY**：目标文件已存在却本会话没 Read 过（改前必读）；新内容含无紧邻 why 注释的屏蔽标记——`try/except: pass` / `# noqa` / `# type: ignore` / `@ts-ignore` / `@ts-expect-error` / `eslint-disable` / `time.sleep` 绕过；往**代码**里塞硬编码密钥 / 服务商 token / URL 内凭证（rule 10）或 user-home 绝对路径——`C:\Users\…` / `/home/…` / `$HOME` / `%USERPROFILE%` / 引号 `~/…`（rule 11）；同一文件第 4 次小改（≤ 10 行且 < 200 字符）而中间无系统式重写——净减少改动与只改版本号 / 日期的记账改动永不计数。
 - **Bash → `PreToolUse(Bash)` DENY**：`--no-verify` / `--no-gpg-sign` / `git push --force`（非 `--force-with-lease`）/ `chmod 777` / `git rebase --skip` / `--break-system-packages` / `rm -rf` 打到根 / `$HOME` / `~`；以及下方任何 `must` 圣旨。
-- **Stop → BLOCK**：回复声称完成却 (a) 无 `$ 命令 → 输出` 证据 · (b) 与 done-claim 相距 50 字符内有第一人称含糊（`我觉得` / `应该是` / `大概` / `I think` / `maybe` / `probably`）· (c) 缺四问自答（真解决？更好方案？哪些没验？验证合理？）——收敛 · (d) 没对照用户原始请求逐项核对——忠实 · (e) edit 轮缺 根因 / 架构 / 方案 / 连带 / 风险 ≥ 3 项（写前必想）· (f) edit 轮缺 根因 + 影响 + 方案 三件套 · (g) 声称"改了 X"而 X 的 mtime 未变 · (h) 无 `tldr`，或某条 tldr 超 160 显示列（CJK 每字算 2）——Stop layer (h) · (i) sync-gate 某组 `when` 命中而无 `require` 文件改动、又没有 `同步核对:` 回答上一次拦截点名的组（`n/a` 之类占位值按缺失处理）。
+- **Stop → BLOCK**：回复声称完成却 (a) 无输出证据（以 `$ ` 开头的一行、测试计数，或不带语言标记的围栏输出块） · (b) 与 done-claim 相距 50 字符内有第一人称含糊（`我觉得` / `应该是` / `大概` / `I think` / `maybe` / `probably`）· (c) 缺四问自答（真解决？更好方案？哪些没验？验证合理？）——收敛 · (d) 没对照用户原始请求逐项核对——忠实 · (e) edit 轮缺 根因 / 架构 / 职责 / 方案 / 连带 / 风险 ≥ 3 项（写前必想）· (f) edit 轮缺 根因 + 影响 + 方案 三件套 · (g) 声称"改了 X"而 X 的 mtime 未变 · (h) 无 `tldr`，或某条 tldr 超 160 显示列（CJK 每字算 2）——Stop layer (h) · (i) sync-gate 某组 `when` 命中而无 `require` 文件改动、又没有 `同步核对:` 回答上一次拦截点名的组（`n/a` 之类占位值按缺失处理）。
 
 ## 收尾（含 done-claim 的回复必走）
 

@@ -3,9 +3,10 @@
 # Co-update groups for THIS repo. Semantics of one group: if any file
 # edited during a session matches a `when` glob, then at least one edited
 # file must match a `require` glob — otherwise Stop layer (i) blocks the
-# done-claim, unless the reply carries an explicit sync marker
-# (`同步核对:` / `sync-check:`) explaining why the require side needs no
-# change.
+# done-claim. The block names the group; a substantive sync marker line in
+# the next reply (e.g. `sync-check: <what was checked>` / `同步核对: …`)
+# settles it for the session — placeholders such as `n/a` / `无` and quoted
+# markers do not count.
 #
 # Globs are matched with fnmatch against PROJECT-RELATIVE paths, and `*`
 # crosses path separators (so "rules/*.md" also covers "rules/zh/").
@@ -34,14 +35,14 @@ note = "Editing a rule fans out to at least one of: injected prompts / docs/RULE
 name = "hooks-tests"
 when = ["hooks/scripts/*.py"]
 require = ["tests/*.py"]
-note = "Every hook-script change needs its black-box test file re-checked (ARCHITECTURE.md §8)."
+note = "Every change under hooks/scripts/ (lib/ included — `*` crosses separators) needs its test file re-checked (ARCHITECTURE.md §8)."
 
 [[groups]]
 name = "version-manifests"
 when = [".claude-plugin/plugin.json"]
 require = [".claude-plugin/marketplace.json", "CHANGELOG.md"]
 mode = "all"
-note = "plugin.json is the version authority; BOTH marketplace.json AND CHANGELOG must move with it (docs/CONTRIBUTING.md, Release checklist — updating only one of them is exactly the v0.22.1 shipping failure)."
+note = "plugin.json is the version authority; BOTH marketplace.json AND CHANGELOG must move with it (docs/CONTRIBUTING.md, Release checklist — an install reports whatever marketplace.json says)."
 
 [[groups]]
 name = "ci-workflow"
@@ -53,4 +54,4 @@ note = "The workflow is the drift gates' own input. `fetch-depth: 0` is what giv
 name = "guards-readme"
 when = ["hooks/scripts/*_guard*.py"]
 require = ["README*.md"]
-note = "A guard script's user-visible behaviour is enumerated in both READMEs (the PreToolUse gate table and the nine-layer Stop table). v0.35.1: the layer-(b) hedge set was described in three README places that no sweep covered, because v0.34.1 scoped the same fix to prompts/ only. Widened from stop_guard to all three *_guard.py by the same argument; v0.41 widened the glob again to the *_guard_impl.py bodies, which is where the behaviour lives since the entries became thin shells. The gate is a floor: answering with a sync-check line is the intended escape when a change is not user-visible."
+note = "A guard's user-visible behaviour is enumerated in both READMEs (the PreToolUse gate table and the nine-layer Stop table). The glob covers the entry shells and their *_guard_impl.py bodies, where the behaviour lives. The gate is a floor: answering with a sync-check line is the intended escape when a change is not user-visible."

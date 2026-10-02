@@ -66,7 +66,9 @@ cc-enforcer:
   edits:                      # ✏️ rule 09
     - {file: "path:line", what: "<one-line WHAT>"}
   convergence:                # ✅ rule 06
-    re-trigger: "$ <cmd> → <output with test counts>"
+    re-trigger: |               # a line starting `$ ` is layer-(a) evidence
+      $ <cmd>
+      <output, with test counts>
     boundary case: <boundary / negative>
     existing tests: <all pass>
     self-quiz: {really solved: ..., better solution: ..., unverified: ..., verification reasonable: ...}

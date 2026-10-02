@@ -929,8 +929,12 @@ class TestHedgeExamplesAreReal(unittest.TestCase):
 class TestSampleCoverageBarMatchesEditscale(unittest.TestCase):
     """The rolling-patch sample's per-file bar is arithmetic, so derive it."""
 
-    _BAR = re.compile(
-        r"(\d+) of (\d+) lines or (\d+) of (\d+) chars")
+    # Both catalogs' spellings: the zh sample prints its own form, which an
+    # English-only pattern would leave unchecked.
+    _BARS = (
+        re.compile(r"(\d+) of (\d+) lines or (\d+) of (\d+) chars"),
+        re.compile(r"(\d+)/(\d+) 行，或 (\d+)/(\d+) 字符"),
+    )
     SURFACES = ("README.md", "README.zh.md")
 
     def test_every_sample_bar_is_what_editscale_computes(self) -> None:
@@ -938,8 +942,9 @@ class TestSampleCoverageBarMatchesEditscale(unittest.TestCase):
         wrong: list[str] = []
         found_any = False
         for surface in self.SURFACES:
-            for lines_bar, lines_total, chars_bar, chars_total in \
-                    self._BAR.findall(_read(surface)):
+            text = _read(surface)
+            for lines_bar, lines_total, chars_bar, chars_total in (
+                    m for bar in self._BARS for m in bar.findall(text)):
                 found_any = True
                 expected = coverage_bar((int(chars_total), int(lines_total)))
                 actual = (int(chars_bar), int(lines_bar))

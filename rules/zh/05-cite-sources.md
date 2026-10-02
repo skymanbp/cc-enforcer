@@ -6,7 +6,7 @@ severity: must
 
 # 规则 05 — 引用必须可追溯
 
-**强制执行：** 无钩子。`/cc-enforcer:verify` 把回复交给 `verifier` 子代理事后逐条核验引用；`Stop` layer (a)（rule 06）不放行任何不带命令输出的完成声明。
+**强制执行：** 无钩子。`/cc-enforcer:verify` 让 agent 事后逐条复核上一条回复里的断言，其中 `file:line` 引用交给只读的 `verifier` 子代理核验；`Stop` layer (a)（rule 06）不放行任何不带命令输出的完成声明。
 
 ## 原则
 

@@ -70,7 +70,7 @@ description: 全库更新扫描器。在用户要求"全库更新"、"扫一遍�
 修复清单（`file:line`）+ 未处置项及原因（rule 07 半成品声明）+ 把本次发现的**可复发
 连带关系登记进 sync-gate**（rule 12 被动半区），让下次漂移在 Stop layer (i) 被物理拦下。
 
-**登记用 CLI，不要手搓 TOML（v0.31 起）：**
+**登记用 CLI，不要手搓 TOML：**
 
 ```bash
 python "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/manage_sync_gate.py" \

@@ -6,7 +6,7 @@ severity: must
 
 # Rule 05 — Citations must be traceable
 
-**Enforced by:** no hook. `/cc-enforcer:verify` hands the reply to the `verifier` subagent, which re-checks every citation after the fact; `Stop` layer (a) (rule 06) refuses a done-claim that carries no command output at all.
+**Enforced by:** no hook. `/cc-enforcer:verify` makes the agent re-check every claim in its last reply after the fact, delegating `file:line` citations to the read-only `verifier` subagent; `Stop` layer (a) (rule 06) refuses a done-claim that carries no command output at all.
 
 ## Principle
 

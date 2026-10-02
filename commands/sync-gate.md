@@ -47,7 +47,7 @@ python "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/manage_sync_gate.py" remove rules-fa
   `*` **跨路径分隔符**（所以 `rules/*.md` 也覆盖 `rules/zh/`）。
 - `--all`：`mode = "all"`，**每一个** require glob 都必须有编辑命中。用于
   锁步不变量（例：`plugin.json` 改了，`marketplace.json` 与 `CHANGELOG.md`
-  必须双双跟上——只跟一个正是 v0.22.1 的翻车形态）。不加则是 any-of。
+  必须双双跟上——只跟一个，安装端就会报出旧版本）。不加则是 any-of。
 - `--note`：为什么这几个文件必须一起动。会出现在 layer (i) 的拦截理由里，
   所以写给"三个月后的自己"看。
 

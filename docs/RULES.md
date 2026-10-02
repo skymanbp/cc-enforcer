@@ -26,13 +26,13 @@
 |---:|------|----------|----------|
 | 01 | [验证而非猜测](../rules/01-verify-dont-guess.md) | 任何关于文件、API、版本、文献、报错的断言 | Stop layer (b)（完成声明旁的第一人称含糊词）、layer (g)（"我改了 X"与磁盘 mtime 矛盾） |
 | 02 | [系统式而非反应式](../rules/02-systematic-not-reactive.md) | 修 bug、改架构、重构、加功能前的七问 | 文本层纪律；Stop layer (e) 用其关键词间接评分 |
-| 03 | [修根因，不修症状](../rules/03-root-cause.md) | 异常处理、测试 / CI 失败、竞态、钩子失败；上游溯源阶梯 | `PreToolUse(Bash)` DENY（绕过模式与破坏性命令） |
+| 03 | [修根因，不修症状](../rules/03-root-cause.md) | 异常处理、测试 / CI 失败、竞态、钩子失败；上游溯源阶梯 | `PreToolUse(Bash)` DENY（绕过模式与破坏性命令）+ `PreToolUse(Edit\|Write)` DENY（无 why 的屏蔽标记 / 掩盖竞态的 `time.sleep`） |
 | 04 | [完整阅读，拒绝关键词依赖](../rules/04-full-context.md) | 编辑前、跨文件影响分析 | `PreToolUse(Edit\|Write)` DENY（本会话未 Read 的已存在文件） |
 | 05 | [引用必须可追溯](../rules/05-cite-sources.md) | 任何对外陈述（PR、回复、报告） | 文本层纪律；`verifier` 子代理事后核验 |
 | 06 | [验证收敛](../rules/06-verify-convergence.md) | 任何修复 / 更新完成后的收敛验证 | Stop layer (a)（无证据）、layer (c)（缺四问自答） |
 | 07 | [任务忠实](../rules/07-task-fidelity.md) | 声称完成前对照原始请求逐项核对 | Stop layer (d) |
 | 08 | [改前必读，写前必想](../rules/08-read-before-edit-think-before-write.md) | 任何 `Edit` / `Write` 前的前置纪律 | `PreToolUse(Edit\|Write)` DENY（未读即改）+ Stop layer (e) |
-| 09 | [系统式修改，禁止打补丁](../rules/09-systematic-modification.md) | 修改内容的姿势：屏蔽标记、滚动补丁、统一修复 | `PreToolUse(Edit\|Write)` DENY（无 why 的屏蔽标记；同文件第 4 次小改）+ Stop layer (f) |
+| 09 | [系统式修改，禁止打补丁](../rules/09-systematic-modification.md) | 修改内容的姿势：屏蔽标记、滚动补丁、统一修复 | `PreToolUse(Edit\|Write)` DENY（无 why 的屏蔽标记；同文件第 4 次小改）+ `PreToolUse(Bash)` DENY（绕过模式）+ Stop layer (f) |
 | 10 | [禁止非必须硬编码](../rules/10-no-hardcoding.md) | 把本应是配置 / 环境的密钥凭证内联成代码字面量 | `PreToolUse(Edit\|Write)` DENY（仅代码目标；散文文档与锁文件豁免） |
 | 11 | [禁止非必须路径依赖](../rules/11-no-path-dependency.md) | 把机器特定的 user-home 绝对路径写死进代码 | `PreToolUse(Edit\|Write)` DENY（同上） |
 | 12 | [全库同步](../rules/12-repo-wide-sync.md) | 修改收尾的全库引用清扫；按需全库陈旧扫描 | Stop layer (i)（项目级 `.claude/cc-enforcer/sync-gate.toml`，按项目选择启用）+ `repo-refresh` skill |
@@ -67,7 +67,7 @@ Stop 各层的判定顺序、标记集合与宽限语义见 [`ARCHITECTURE.md`](
 | [`agents/verifier.md`](../agents/verifier.md) | 规则 05 + 01 的事后核验；只读 |
 | [`skills/systematic-debug/SKILL.md`](../skills/systematic-debug/SKILL.md) | 规则 02 + 03 + 06 + 08 + 09 |
 | [`skills/repo-refresh/SKILL.md`](../skills/repo-refresh/SKILL.md) | 规则 12 主动半区：全库陈旧 / 过时 / 冗余 / 错误 / 漂移扫描 |
-| [`hooks/scripts/read_guard.py`](../hooks/scripts/read_guard.py) | 规则 04 + 08（改前必读）、09（屏蔽标记 + 滚动补丁频率）、10 + 11（内容值检测）、12（`edited_files` 记录） |
+| [`hooks/scripts/read_guard.py`](../hooks/scripts/read_guard.py) | 规则 03 + 09（屏蔽标记）、04 + 08（改前必读）、09（滚动补丁频率）、10 + 11（内容值检测）、12（`edited_files` 记录）+ 圣旨 `deny_edit` |
 | [`hooks/scripts/bash_guard.py`](../hooks/scripts/bash_guard.py) | 规则 03（绕过模式拦截）+ 圣旨 + `register_read` 逃生口 |
 | [`hooks/scripts/stop_guard.py`](../hooks/scripts/stop_guard.py) | 九层：(a)(c) 06 · (b) 01 · (d) 07 · (e) 08 · (f) 09 · (g) 01+06 · (h) TL;DR 收尾约定 · (i) 12 |
 | [`hooks/scripts/lib/`](../hooks/scripts/lib/) | 判定模型（`srclex` / `mdctx` / `shellcmd` / `editscale`）、状态、配置读取、消息目录、语言解析——一处定义、多处消费，见 ARCHITECTURE §2.6 |

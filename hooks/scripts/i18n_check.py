@@ -36,7 +36,7 @@ What it checks, for each translation subdir under each skeleton root:
      checks 1 and 2 could not see it.
 
      Two deliberate bounds, both measured rather than guessed: the check
-     looks only at enforcement lines (comparing *all* code spans flags 24
+     looks only at enforcement lines (comparing *all* code spans flags dozens of
      legitimate translation differences in ``rules/``), and only at
      machine-shaped tokens (a first cut demanded translators reproduce
      English prose examples such as ``I created Y.md``). What it does NOT
@@ -187,7 +187,7 @@ def _enforcement_tokens(text: str) -> set[str]:
     """Backtick code spans on lines stating a physical enforcement outcome.
 
     Scoped to those lines deliberately: comparing *every* code span across
-    languages flags 24 legitimate translation differences in ``rules/``,
+    languages flags dozens of legitimate translation differences in ``rules/``,
     which would make the check unusable.
     """
     out: set[str] = set()

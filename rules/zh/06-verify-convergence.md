@@ -6,7 +6,7 @@ severity: must
 
 # 规则 06 — 验证收敛（post-fix verify-and-converge）
 
-**强制执行：** `Stop` layer (a) —— 完成声明不带证据（`$ 命令 → 输出` 行、测试运行摘要或围栏输出块）即 BLOCK；`Stop` layer (c) —— 回复既无收敛标记（`convergence` / `rule 06` / `self-quiz` / `收敛` / `自答`）、也没有下面四问中两问的答案，即 BLOCK。
+**强制执行：** `Stop` layer (a) —— 完成声明不带证据（以 `$ ` 开头的一行、`N passed` / `Ran N tests` 之类的测试运行摘要、提到 `pytest` / `unittest`，或不带语言标记的围栏输出块——带语言标记的围栏只能靠前几种形态计入）即 BLOCK；`Stop` layer (c) —— 回复既无收敛标记（`convergence` / `rule 06` / `self-quiz` / `收敛` / `自答`）、也没有下面四问中两问的答案，即 BLOCK。
 
 ## 原则
 

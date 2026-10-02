@@ -5,9 +5,9 @@ argument-hint: "list | add ID \"TEXT\" [--must|--should] [--deny-edit REGEX]* [-
 
 # /cc-enforcer:edict
 
-> 圣旨 = 用户为本项目自定义的硬规则，优先级高于通用 12 条。
+> 圣旨 = 用户在内置 12 条之上追加的自定义硬规则（叠加，不能放宽内置规则）。
 > 默认文件：`${CLAUDE_PROJECT_DIR}/.claude/cc-enforcer/edicts.toml`（项目级，可入 git 团队共享）。
-> `--global`（v0.14）：写入 `~/.claude/cc-enforcer/edicts.toml`（个人全局，跨项目生效）。
+> `--global`：写入 `~/.claude/cc-enforcer/edicts.toml`（个人全局；仅在当前项目没有自己的 edicts.toml 时生效，不与项目级合并）。
 
 ## 子命令
 
@@ -47,7 +47,7 @@ python "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/manage_edicts.py" $ARGUMENTS
 
 - **必须（must）**：违反即被 `PreToolUse(Edit|Write|Bash)` 物理 DENY。
 - **建议（should）**：仅注入软提醒，不 DENY。
-- 圣旨**不能**绕过插件内置的 12 条规则；内置守卫先跑、圣旨后跑。
+- 圣旨**不能**绕过插件内置的 12 条规则；内置守卫先跑、圣旨后跑（唯一例外是滚动补丁计数，它在圣旨之后，见 EDICTS.md）。
 - 文件改动**即时生效**（hooks 每次重读）。
 
 完整设计 → [`docs/EDICTS.md`](docs/EDICTS.md)。

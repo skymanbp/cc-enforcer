@@ -6,7 +6,7 @@ severity: must
 
 # 规则 03 — 修根因，不修症状
 
-**强制执行：** `PreToolUse(Bash)` —— 绕过与破坏性命令 `--no-verify`、`--no-gpg-sign`、`git rebase --skip`、`--break-system-packages`、`chmod 777`、打到根路径的 `rm -rf`、`git push --force`（`--force-with-lease` 除外）一律 DENY；`PreToolUse(Edit|Write)` —— 无理由的屏蔽标记、或用来等过竞态的 `time.sleep` 一律 DENY（标记清单见 rule 09）。上游溯源本身是文本层纪律。
+**强制执行：** `PreToolUse(Bash)` —— 绕过与破坏性命令 `--no-verify`、`--no-gpg-sign`、`git rebase --skip`、`--break-system-packages`、`chmod 777`、打到根路径 / `$HOME` / `~` 的 `rm -rf`、`git push --force`（`--force-with-lease` 除外）一律 DENY；`PreToolUse(Edit|Write)` —— 无理由的屏蔽标记、或用来等过竞态的 `time.sleep` 一律 DENY（标记清单见 rule 09）。上游溯源本身是文本层纪律。
 
 ## 原则
 
@@ -41,10 +41,8 @@ severity: must
 4. **在确诊的起源处修一次**——一次统一修改，覆盖该起源产生的每一个
    实例（rule 09"一个根因，一次统一修复"）。
 
-在本仓库自己身上的实测：一次审计正确地*点名*了一条根因——检测器
-描述的是"字符串"而不是"概念"——然后只修了它见过的实例。机制留了
-下来，下一轮审计就发现同一类的新一批缺陷，其中包括一个倒退。修
-机制缺陷的实例，就是高一层的修症状。
+点名了根因、却只修已经见过的实例，机制就留在原地，继续产出同一类的
+下一批缺陷。修机制缺陷的实例，就是高一层的修症状。
 
 ## 禁止的"反模式"清单
 

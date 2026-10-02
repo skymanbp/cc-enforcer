@@ -76,7 +76,7 @@ argument-hint: "[before|after|converge|fidelity|pre-edit|systematic|tldr|sync] (
 - [ ] **F2 · 根因证据** — 根因判断当场验证过（Read / Grep / 命令输出）。
 - [ ] **F3 · 完整覆盖** — 根因牵涉的所有连带点一次修完，没有"其他下次再说"。
 - [ ] **F4 · 方案对比** — 至少对比了 2 个方案（简洁性 / 性能 / 架构契合度 / 维护性）。
-- [ ] **F5 · 无补丁标记** — new_string 中没有下列裸标记（无紧邻 why 注释）。这是一份**封闭集**，逐条对应 [`read_guard.py`](hooks/scripts/read_guard.py) 的 `PATCH_MARKERS` 加上独立的 `try/except: pass` 结构扫描；少列一条，就会出现"每项都打了勾却仍被 DENY"：
+- [ ] **F5 · 无补丁标记** — new_string 中没有下列裸标记（无紧邻 why 注释）。这是一份**封闭集**，逐条对应 [`read_guard_impl.py`](hooks/scripts/read_guard_impl.py) 的 `PATCH_MARKERS` 加上独立的 `try/except: pass` 结构扫描；少列一条，就会出现"每项都打了勾却仍被 DENY"：
   - [ ] 无 `try / except: pass` 静默吞错（结构扫描，不在 `PATCH_MARKERS` 里）
   - [ ] 无 `# noqa` 无解释（屏蔽 lint）
   - [ ] 无 `# type: ignore` 无解释（屏蔽 mypy）
@@ -112,7 +112,7 @@ argument-hint: "[before|after|converge|fidelity|pre-edit|systematic|tldr|sync] (
 - [ ] **H1 · 引用集枚举** — 对本次改动的符号 / 文件名 / 数量 / 版本 / 概念做过全库 Grep（代码 + 文档 + 测试 + 翻译）。
 - [ ] **H2 · 逐项分类** — 每个命中标了"必须改" / "核对过无需改"，没有"没看"类。
 - [ ] **H3 · 同会话连带更新** — 所有"必须改"都在本会话改了。
-- [ ] **H4 · 清扫已汇报** — 收尾回复有 `同步核对:` / `sync-check:` 行，点名连带改了什么、核对过什么；占位值（`无` / `n/a` / `-` / 空）按缺失处理，写在围栏或引用块里的标记不算。
+- [ ] **H4 · 清扫已汇报** — 收尾回复有 `同步核对:` / `sync-check:` 行，点名连带改了什么、核对过什么；占位值（`无` / `n/a` / `-` / 空）按缺失处理，写在引用块、或 `yaml` schema 块以外的围栏里的标记不算。
 - [ ] **H5 · sync-gate 组满足** — `.claude/cc-enforcer/sync-gate.toml` 里 `when` 命中的组，`require` 侧有编辑，或 H4 的标记说明了为何无需改。
 - [ ] **H6 · 不变量登记** — 本次暴露的新连带关系是否值得登记为新 sync-gate 组。
 

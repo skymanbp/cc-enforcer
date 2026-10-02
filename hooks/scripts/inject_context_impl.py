@@ -391,8 +391,8 @@ def main() -> int:
         sys.stderr.write(f"[cc-enforcer] edicts injection failed: {e}\n")
 
     # v0.18 auto-GC on SessionStart (opt-in via CC_ENFORCER_AUTO_GC_DAYS).
-    # Runs after the main injection so even if GC blows up, the prompt
-    # injection already landed. Rate-limited by a marker file so we don't
+    # Runs before the emit but fails open, so a GC failure can never
+    # suppress the injection. Rate-limited by a marker file so we don't
     # re-scan on every rapid session restart.
     #
     # v0.34 env-file hygiene rides the same slot and cadence: SessionStart

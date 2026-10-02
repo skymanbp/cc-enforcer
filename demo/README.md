@@ -42,7 +42,7 @@ defect this plugin exists to catch:
 
 | | |
 |---|---|
-| **Real** | Every cc-enforcer verdict, verbatim from `hooks/scripts/read_guard.py` and `stop_guard.py`, run as subprocesses with the payload shape Claude Code sends. Nothing transcribed or reworded. |
+| **Real** | Every cc-enforcer verdict, verbatim from `hooks/scripts/read_guard.py` and `stop_guard.py`, run as subprocesses with the payload shape Claude Code sends (`last_assistant_message`, no `turn_count`). Nothing transcribed or reworded. |
 | **Real** | Every test and probe result, captured from a throwaway copy of `paygate/`. |
 | **Scripted** | The agent's five moves. No LLM is in the loop. The sequence stands in for one — patch the symptom, patch the patch, declare done — and scripting it is what makes both runs identical in everything except the hooks. |
 
@@ -59,7 +59,8 @@ one run cannot change what the remaining edits do in the other.
 | — | `"Fixed the charge bug. The suite is green."` | **BLOCK** — Stop layer (a), no evidence | 06 |
 
 After the block, the run does what the gate is pushing toward: one
-systematic `Write` that names the root cause — the gateway has *two*
+systematic `Write` (applied directly, not routed through the hook) that names
+the root cause — the gateway has *two*
 response shapes and the old body knew only one — and the probe comes back
 `HANDLED`.
 

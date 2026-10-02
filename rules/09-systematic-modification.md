@@ -67,12 +67,10 @@ shape is **trace upstream → diagnose → one unified fix**:
    the class. When the sweep shows the class has exactly one member,
    say so explicitly — the sweep report is then the closure evidence.
 
-The instance-fix trap, measured on this repo: an audit named a root
-cause and fixed only the instances it had seen; the mechanism survived
-and regenerated a fresh crop of the same class one release later —
-including one regression. The next pass replaced the mechanism (33
-findings → three root causes → four shared models), which is exactly
-the shape this section prescribes. A second failure with the same shape
+The instance-fix trap (rule 03): fixing only the instances already seen
+leaves the mechanism to regenerate the class; replacing the mechanism —
+many findings, a few root causes, one shared model each — is the shape
+this section prescribes. A second failure with the same shape
 is the class announcing itself — an obligation to test whether the
 origins are truly shared, never a coincidence to ignore.
 
@@ -128,7 +126,9 @@ A suppression marker — `# noqa`, `# type: ignore`, `// @ts-ignore`,
 with a rationale **in a comment** on the same line or an immediately
 adjacent one: a token such as `because` / `why` / `rationale` / `因为` /
 `原因` / `故意`, or a justification lead such as `see issue` /
-`intentional` / `third-party` / `per spec`. Only comment text counts — the
+`intentional` / `third-party` / `per spec` — or a substantive explanation
+written after the marker on the same line (≥ 12 characters, or ≥ 6 CJK
+characters, not led by a deferral word). Only comment text counts — the
 same word inside code or an ordinary string literal does not — and a bare
 deferral (TODO / FIXME / HACK / WIP / later) is not a reason. Block
 comments and docstrings count as comments; a `#` inside a URL does not.

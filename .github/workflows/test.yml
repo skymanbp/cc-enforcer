@@ -1,12 +1,10 @@
 name: tests
 
-# Why this workflow exists:
-# v0.5.0 shipped 35 unittests covering all four hook scripts. Without CI,
-# any regression after a merge stays silent until someone runs the suite
-# locally. This workflow runs `python -m unittest discover tests` on every
-# push to main and every PR, on both Linux and Windows (the plugin
-# specifically handles Windows path quirks, so cross-platform coverage
-# matters).
+# Runs the stdlib unittest suite (tests/README.md) on pushes to main, PRs
+# into main and manual dispatch, on both Linux and Windows (the plugin
+# specifically handles Windows path and encoding quirks, so cross-platform
+# coverage matters). CI pins one Python; the supported floor is 3.11
+# (README).
 
 on:
   push:

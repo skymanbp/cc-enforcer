@@ -29,8 +29,12 @@ hooks still run first).
 
 ## 2. File format
 
-Location: `${CLAUDE_PROJECT_DIR}/.claude/cc-enforcer/edicts.toml`.
-Fallback: `~/.claude/cc-enforcer/edicts.toml` (personal global).
+Resolution (the first file that exists wins; files are never merged):
+
+1. `${CLAUDE_PROJECT_DIR}/.claude/cc-enforcer/edicts.toml`
+2. `<cwd>/.claude/cc-enforcer/edicts.toml`, only when the cwd is a project
+   root (it contains `.git` or `.claude/`)
+3. `~/.claude/cc-enforcer/edicts.toml` (personal global)
 
 Format: TOML, array of tables.
 
@@ -104,7 +108,7 @@ they are whatever you wrote in `edicts.toml`. Only the framing switches.
 ### Check order
 
 **Built-in rules run first, with one documented exception.** In
-`read_guard.py`:
+`read_guard_impl.py` (the body behind `read_guard.py`):
 
 1. read-before-edit guard (rule 04 + 08)
 2. patch-style marker guard (rule 09)
@@ -116,7 +120,7 @@ they are whatever you wrote in `edicts.toml`. Only the framing switches.
    rather than a content check, and it must not increment for a write that
    some earlier layer is going to deny anyway
 
-In `bash_guard.py`:
+In `bash_guard_impl.py` (the body behind `bash_guard.py`):
 
 1. static deny patterns: `--no-verify` / `--no-gpg-sign` / `chmod 777` /
    `git rebase --skip` / `--break-system-packages` / `rm -rf` on a root
@@ -140,6 +144,7 @@ hook fires before reaching the edict layer.
 /cc-enforcer:edict list
 /cc-enforcer:edict add E01 "No mongoose" --must --deny-edit 'mongoose' --deny-bash 'npm i mongoose'
 /cc-enforcer:edict remove E01
+/cc-enforcer:edict reload
 /cc-enforcer:edict path
 ```
 
@@ -150,6 +155,7 @@ python "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/manage_edicts.py" list
 python "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/manage_edicts.py" add ID "TEXT" [--must|--should] \
     [--deny-edit REGEX]* [--deny-bash REGEX]* [--note NOTE] [--global]
 python "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/manage_edicts.py" remove ID [--global]
+python "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/manage_edicts.py" reload   # re-read and print the loaded edicts
 python "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/manage_edicts.py" path
 ```
 
@@ -163,16 +169,34 @@ let claude touch my dotfiles", "always use my preferred test runner").
 
 `remove` without `--global` looks in the project file first then falls
 back to the global file; pass `--global` to restrict removal to the
-global file only.
+global file only. If no project root can be resolved, it exits 2 instead.
 
-The loader (used by all hooks) tries project first then global, so
-project edicts take precedence when both files define the same id.
+The loader (used by `inject_context`, `read_guard` and `bash_guard`; the
+Stop hook never reads edicts) reads exactly one file, the first that exists
+in the order of §2. A project `edicts.toml`, when present, replaces the
+global one entirely, whatever the ids.
+
+`add` and `remove` rewrite the whole file: hand-written comments are dropped
+and regexes are re-emitted as escaped basic strings (semantically identical).
 
 ### Hand-edit
 
-The file is small enough to edit directly. Changes take effect on the
+The file is small enough to edit directly (and hand-editing is the only way
+to keep comments — see above). Changes take effect on the
 next hook event — no reload needed (the loader reads disk on every
 invocation).
+
+### Debugging an edict that does not fire
+
+1. `manage_edicts.py path` — is the file you edited the one that loads? Only
+   the first existing file of §2 is read, so a project file shadows the
+   global one.
+2. `manage_edicts.py list` — does the edict appear, with the hard-pattern
+   count you expect? `(soft-only)` means it has no `deny_edit` / `deny_bash`,
+   and a `should` edict never denies.
+3. Look at the hook's stderr for `[cc-enforcer edicts] …` lines: an invalid
+   regex, a missing `id` / `text`, a non-list pattern field or a duplicate id
+   is reported there and skipped rather than raised.
 
 ---
 

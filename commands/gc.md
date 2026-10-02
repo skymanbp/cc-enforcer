@@ -70,9 +70,9 @@ bytes_freed: <B> |   would free: <B>B
 
 - ❌ 不传任何参数就直接 `--apply` —— 始终先 dry-run 让用户看清楚再问。
 - ❌ 删除 `${CLAUDE_PLUGIN_DATA}/sessions/` 之外的任何文件 —— 脚本本身有
-  这道防线（只 glob `<state_dir>/*.json`），不要绕过它。
+  这道防线（只处理 `<state_dir>/*.json`，`--apply` 时另清理超过 24h 的 `*.tmp` 残留），不要绕过它。
 
-## 自动 GC（v0.18 · opt-in）
+## 自动 GC（opt-in）
 
 设置环境变量 `CC_ENFORCER_AUTO_GC_DAYS=N`（正整数）即可让 SessionStart
 钩子在每次开会话时自动删除 ≥ N 天未触碰的 state 文件。受 24h 速率限制

@@ -18,9 +18,7 @@ severity: must
 
 A machine-specific absolute path is a portability landmine: it works on
 the author's box and breaks on every other machine, CI runner, and
-container. This repo lived that failure — a hotfix once repaired a
-Windows path-portability bug in its *own* hook (a `~`-containing runner
-`$TEMP` the path regex could not parse). Rule 11 makes "don't hardcode a
+container. Rule 11 makes "don't hardcode a
 user-home path" a write-time, root-cause discipline (rule 03).
 
 ## Scope — user-home roots are the hard class

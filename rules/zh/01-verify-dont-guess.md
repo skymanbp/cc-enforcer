@@ -6,7 +6,7 @@ severity: must
 
 # 规则 01 — 验证而非猜测
 
-**强制执行：** `Stop` layer (b) —— 完成声明 50 字符内出现第一人称含糊词（`I think` / `I believe` / `maybe` / `probably` / `我觉得` / `应该是`）即 BLOCK；`Stop` layer (g) —— 回复声称改了 / 建了某文件而它的 mtime 本轮未动即 BLOCK。本规则其余内容是文本层纪律。
+**强制执行：** `Stop` layer (b) —— 完成声明 50 字符内出现第一人称含糊词（`I think` / `I believe` / `maybe` / `probably` / `我觉得` / `应该是`）即 BLOCK；`Stop` layer (g) —— edit 轮的回复声称改了某文件、而它的 mtime 自本会话首次见到后未动，或声称建了某文件、而它并不存在，即 BLOCK。本规则其余内容是文本层纪律。
 
 ## 原则
 

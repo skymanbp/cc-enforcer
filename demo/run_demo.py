@@ -100,8 +100,8 @@ def _register_read(sid: str, data: Path, path: Path) -> None:
 
 def _stop(sid: str, data: Path, message: str, cwd: Path) -> str | None:
     res = _hook("stop_guard.py", {
-        "session_id": sid, "hook_event_name": "Stop", "turn_count": 9,
-        "cwd": str(cwd), "assistant_message": message,
+        "session_id": sid, "hook_event_name": "Stop",
+        "cwd": str(cwd), "last_assistant_message": message,
     }, data)
     return (res or {}).get("reason")
 

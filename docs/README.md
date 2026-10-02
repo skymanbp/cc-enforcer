@@ -31,5 +31,5 @@ Python in `../hooks/scripts/`, and the guarantee that this documentation still
 matches them is [`../tests/test_doc_sync.py`](../tests/test_doc_sync.py) — a
 CI gate that derives every pinned number and inventory from the code at test
 time, plus three behavioural claim classes (advertised hedge triggers, printed
-coverage bars, backticked identifiers). A green gate still says nothing about
+coverage bars, backticked `UPPER_SNAKE` identifiers). A green gate still says nothing about
 judgement prose: whether an explanation is right, or a rationale sound.

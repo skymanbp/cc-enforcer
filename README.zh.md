@@ -36,9 +36,9 @@ LLM 编程助手（Claude Code、Cursor、Copilot、Cline、Aider……）会掉
 | 偷懒模式 | 具体表现 | 对应手段 |
 |---|---|---|
 | **反应式打补丁** | 看到 bug 就 `try/except` 一包，宣告完成。 | rule 03 + 09，`PreToolUse` DENY |
-| **编造引用** | 引用不存在的文件、行号或 API。 | rule 01 + 05，Stop 层 (b)/(g) |
+| **编造引用** | 引用不存在的文件、行号或 API。 | rule 01 + 05，`/cc-enforcer:verify`（按需）；Stop 层 (g) 抓虚假的**改动**声明 |
 | **只靠关键词搜索** | grep 一次就改，从不读周边架构。 | rule 04 + 08，`PreToolUse` DENY |
-| **依赖记忆** | 凭陈旧印象动手，不重新读文件。 | rule 04 + 08，改前必读闸门 |
+| **依赖记忆** | 凭陈旧印象动手，不重新读文件。 | rule 04 + 08，改前必读闸门（每个文件在本会话的首次编辑） |
 | **绕过根因** | 用 `sleep` 掩盖竞态、`--no-verify` 跳过钩子、吞掉异常。 | rule 03，`PreToolUse(Bash)` DENY |
 | **半成品** | 停在"应该能跑"，留 TODO，跳过完整流程。 | rule 07，Stop 层 (d) |
 | **过早宣告完成** | 没重跑失败用例、没比对证据就说"修好了"。 | rule 06，Stop 层 (a)/(c) |
@@ -86,7 +86,7 @@ LLM 编程助手（Claude Code、Cursor、Copilot、Cline、Aider……）会掉
 | **硬编码密钥** | 密钥命名字面量、PEM 私钥头、`AKIA…`、`ghp_…` / `xox…` / `AIza…`、`user:pass@host` URL。 | 环境变量、标注过的占位符，或 why 注释。 |
 | **机器相关路径** | `C:\Users\…`、`/home/<user>/`、`/Users/<user>/`、`$HOME`、`%USERPROFILE%`、引号内 `~/…`。 | 运行时派生，或 why 注释。散文文档与锁文件豁免。 |
 | **滚动补丁** | 同一文件第 4 次小幅 Edit（< 200 字符**且** ≤ 10 行）而中间没有一次系统式重写。 | 一次 ≥ 50 行 / ≥ 1500 字符 / **≥ 该文件 30%** 的重写。净减少改动与升版本号**根本不计数**——见第五节。 |
-| **危险 shell** | `--no-verify`、`--no-gpg-sign`、`git push --force`（非 `--force-with-lease`）、`chmod 777`、`git rebase --skip`、`--break-system-packages`、`rm -rf` 打到 `/` `$HOME` `~`。 | 去修钩子失败 / 权限 / 冲突的根因。 |
+| **危险 shell** | `--no-verify`、`--no-gpg-sign`、`git push --force`（非 `--force-with-lease`）、`chmod 777`、`git rebase --skip`、`--break-system-packages`、`rm -rf` 打到 `/`、系统根目录、`/tmp` 本身、`$HOME` 或 `~`。 | 去修钩子失败 / 权限 / 冲突的根因。 |
 | **你自己的圣旨** | 任何你登记为 `must` 的正则。 | 只有你能放宽它。 |
 
 ### 功能三 —— 完成声明闸门（`Stop` → BLOCK，九层）
@@ -100,11 +100,11 @@ Stop 钩子读 agent 即将收尾的那条回复。只要里面含完成声明�
 | (b) | 01 | 完成声明旁边挨着一个**第一人称 hedge**（"我觉得"、"应该是"、"I think"、"probably"、"maybe"）。裸的 `应该` / `通常` / `should` **刻意不算** hedge —— 它们在正常技术叙述里出现得太频繁。 |
 | (c) | 06 | 有证据，但从没回答**收敛四问**。 |
 | (d) | 07 | 过了收敛，却从没对照**用户的原始请求**逐项核对。 |
-| (e) | 08 | 改了文件却没写出根因 / 架构 / 方案 / 影响 / 风险中的 ≥ 3 项。 |
+| (e) | 08 | 改了文件，却既无 rule-08 标记，也没写出六组 rule-02 关键词（架构 / 职责 / 根因 / 方案 / 影响 / 风险）中的 ≥ 3 组。 |
 | (f) | 09 | 改了文件却缺**根因 + 影响 + 方案**三件套。 |
 | (g) | 01+06 | 说"我改了 X"，而 X 在磁盘上的 **mtime 根本没变**。 |
 | (h) | — | **没有 `tldr`**，或某条 `tldr` 超过 160 显示列。 |
-| (i) | 12 | 命中了项目 **sync-gate** 某组却既没连带修改、也没写 `同步核对:` 行。 |
+| (i) | 12 | 命中了项目 **sync-gate** 某组却没有连带修改。拦截会点名该组；下一条回复里一行有实质内容的 `同步核对:` 让它在本会话内结清。 |
 
 **宽限是按层的**：刚刚拦你的那一层在下一次尝试时被豁免——同一行永远不会连拦
 两次——但你仍在违反的**另一层**照样会开火。升级次数被层数上界，任何一次干净回复
@@ -125,7 +125,8 @@ Stop 钩子读 agent 即将收尾的那条回复。只要里面含完成声明�
   `should` → 只注入提醒文本，永不 deny。
 - **两个作用域。** `.claude/cc-enforcer/edicts.toml`（项目级——提交它，团队共享
   同一条红线）或 `~/.claude/cc-enforcer/edicts.toml`（`--global`）。
-- **热重载** —— 加载器每次钩子事件都重读，所以你可以在会话中途改正则。
+  只加载一个文件：项目级文件存在时，全局文件整个不生效。
+- **热重载** —— 每次注入、每次 Edit / Write / Bash 调用都重读，所以你可以在会话中途改正则。
 - **随合约注入，每轮再注入一次**，圣旨永远不会离开 agent 的视线。
 - **设计上排在内置规则之后**：圣旨只能加限制，不能减。
 - **失败要响，不要静**：无法解析的严重度回落为 `must`，格式错误的圣旨自我丢弃
@@ -143,7 +144,7 @@ Stop 钩子读 agent 即将收尾的那条回复。只要里面含完成声明�
 | `/cc-enforcer:verify` | 把 agent 上一条回复当作不可信输入：抽出每个事实性断言、分桶（代码位置 / 行为 / 外部 / 运行结果），并为每一桶规定重新验证的方法。明令禁止凭记忆。 |
 | `/cc-enforcer:edict` | 圣旨的 `list / add / remove / reload / path`（`--global` 走个人作用域）。 |
 | `/cc-enforcer:gc` | 列出——或加 `--apply` 删除——超过 N 天未触碰的会话状态文件。默认 dry-run，且命令文件禁止 agent 替你选 `--apply`。 |
-| `/cc-enforcer:i18n` | 检查每份翻译是否仍与英文骨架逐文件、逐标题对齐。 |
+| `/cc-enforcer:i18n` | 检查每份翻译是否仍与英文骨架逐文件、逐标题对齐，外加 DENY 行 token 对齐与消息目录的键 / 占位符对齐。 |
 | `/cc-enforcer:sync-gate` | 本项目 rule-12 连带组的 `init / list / check / add / remove / path`。**`check` 才是重点**：闸门的加载器 failing-open，被丢弃的组或打不中任何文件的 glob 会让它**静默**停止守护。`check` 把两者点名并 exit 1，可以进 CI。 |
 | **`verifier` 子代理** | 一个被刻意削弱的只读核对器（只有 Read/Grep/Glob——这是权限事实，不是一句叮嘱）。逐条返回 *intact / drift / missing / mismatch / unverifiable*。它当不了修复者，所以没有动机悄悄把差异抹平。 |
 | **`systematic-debug` skill** | 在 debug 语境自动唤起并接管流程：**先**建一个快速、确定性的复现回路，再谈假设。 |
@@ -163,7 +164,7 @@ Stop 钩子读 agent 即将收尾的那条回复。只要里面含完成声明�
 |---|---|---|---|
 | `SessionStart` | — | 注入 12 条规则纪律摘要 + 回复 schema + 圣旨（默认英文，`CC_ENFORCER_LANG` 可切任意语言）。启动、恢复、清空以及每次上下文压缩后都会触发，所以合约天然不怕压缩。 | [`inject_context.py`](hooks/scripts/inject_context.py) |
 | `UserPromptSubmit` | — | 每轮注入一份短提醒（硬门、Stop 各层、回复 schema 字段名）+ 圣旨——约 2.6k 字符，因为每次提问都要为它再付一次费。 | [`inject_context.py`](hooks/scripts/inject_context.py) |
-| `PreToolUse` | `Read\|Edit\|Write` | 记录 read、抓 mtime 基线，跑上面那些内容 / 频率 / 圣旨闸门。 | [`read_guard.py`](hooks/scripts/read_guard.py) |
+| `PreToolUse` | `Read\|Edit\|Write` | 记录 read、抓 mtime 基线，拒绝改未读文件，跑上面那些内容 / 频率 / 圣旨闸门。 | [`read_guard.py`](hooks/scripts/read_guard.py) |
 | `PreToolUse` | `Bash` | 把命令词法化，拒绝绕过标志与破坏性操作，处理 read 登记，扫圣旨。 | [`bash_guard.py`](hooks/scripts/bash_guard.py) |
 | `Stop` | — | 九层完成声明决策，渲染成状态表 + 恢复指引 + 一行大白话。 | [`stop_guard.py`](hooks/scripts/stop_guard.py) |
 
@@ -176,8 +177,8 @@ Stop 钩子读 agent 即将收尾的那条回复。只要里面含完成声明�
 而不是走宿主机码页，所以非英文回复能完整抵达检测器；守卫**打印**的每一句话都住在
 按语言分开的消息目录里（[`lib/messages_en.py`](hooks/scripts/lib/messages_en.py) 是
 骨架），按 `CC_ENFORCER_LANG` **逐键**解析——守卫**匹配**什么与语言无关
-（[`docs/I18N.md`](docs/I18N.md)）。本页的守卫输出样例是在 `CC_ENFORCER_LANG=zh`
-下实跑捕获的：
+（[`docs/I18N.md`](docs/I18N.md)）。本页的文本样例是在 `CC_ENFORCER_LANG=zh`
+下实跑捕获的（第五节那两张演示图是英文输出）：
 
 ```bash
 setx CC_ENFORCER_LANG zh          # Windows；POSIX 用 export
@@ -185,9 +186,7 @@ setx CC_ENFORCER_LANG zh          # Windows；POSIX 用 export
 
 [`hooks/scripts/`](hooks/scripts/) 下十四个 Python 文件，坐在十五个共享
 [`lib/`](hooks/scripts/lib/) 模块上。只有上表那四个注册为钩子，而这四个各自
-只是一层薄壳，本体在同目录的 `_impl.py` 模块里：Python 只缓存被 import 的模块
-的字节码，从不缓存被直接运行的那个脚本，所以这一拆正是让钩子免于每次调用都
-重新编译自己源码的办法。另外六个（`register_read.py`、`manage_edicts.py`、
+只是一层薄壳，本体在同目录的 `_impl.py` 模块里（原因见 ARCHITECTURE §2.1）。另外六个（`register_read.py`、`manage_edicts.py`、
 `manage_sync_gate.py`、`gc_state.py`、`i18n_check.py`、`bench_hooks.py`）分别
 服务于逃生口、slash 命令、CI 与基准测试。完整契约见
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §2。
@@ -212,7 +211,8 @@ git clone https://github.com/skymanbp/cc-enforcer.git /path/to/cc-enforcer
 用 `/plugin` 验证 → **Installed** 里应该列出 `cc-enforcer@cc-enforcer`。
 命令随后以 `/cc-enforcer:checklist`、`/cc-enforcer:verify`… 的形式出现。
 
-> **依赖**：PATH 上有 Python 3.11 或更新（`tomllib` 是下限；CI 跑 3.13）。钩子脚本只用标准库——没有 pip
+> **依赖**：Python 3.11 或更新，且在 PATH 上能以 `python` 调到——`hooks.json` 调用的是
+> `python` 而不是 `python3`（`tomllib` 是下限；CI 跑 3.13）。钩子脚本只用标准库——没有 pip
 > 步骤，没有第三方包。
 
 #### 作为任意 LLM 的规则包
@@ -261,7 +261,7 @@ green」的收尾直接结束回合](demo/out/without-cc-enforcer.svg)
 
 ### 滚动补丁判决，放大看
 
-第五次编辑根本没落地：
+第四次小幅编辑根本没落地：
 
 ```text
 cc-enforcer · rule 09 违规（滚动补丁拦截）
@@ -292,7 +292,7 @@ cc-enforcer · rule 09 违规（滚动补丁拦截）
 ```
 
 这不是事后打印的忠告 —— **那次编辑根本没有发生**。它印出来的那条按文件的门槛
-（这里是 `37 of 122 lines or 1102 of 3672 chars`）是从磁盘上的目标文件算出来的，
+（这里是 `37/122 行，或 1102/3672 字符`）是从磁盘上的目标文件算出来的，
 而 [`test_doc_sync.py`](tests/test_doc_sync.py) 会从 [`lib/editscale.py`](hooks/scripts/lib/editscale.py)
 重新推导它，所以这个示例不可能再和产生它的代码脱节。
 
@@ -326,7 +326,7 @@ cc-enforcer · Stop 检查在 Layer (b) 未通过 [rule 01 —— 完成声明�
   • 删掉含糊词，用具体输出把结果说死，或
   • 删掉完成声明，明说「尚未确认」，让用户自己决定要不要发。
 
-大白话: 你一边说修好了一边又「应该 / 可能」——删掉含糊词，或明说还没验。
+大白话: 你一边说修好了一边又含糊其辞——删掉含糊词，或明说还没验。
 
 （宽限按层计：这一层在当前恢复序列里不会再拦，但其它仍然不过的层照拦。修 FAIL 行点名的那一项；下一次放行的 Stop 会重置序列。）
 ```
@@ -338,7 +338,7 @@ hedge 集合**只收第一人称的不确定**——`我记得` / `我觉得` / 
 `stop_guard._HEDGE_INNER` 派生触发词清单，任何一个面都不能宣传钩子并不认的
 hedge。
 
-注意状态表报的是**求值顺序**而不是字母顺序：(b) 排在最前，因为无论旁边堆了多少
+注意状态列按的是**求值顺序**而不是行序：(b) 排在最前，因为无论旁边堆了多少
 证据，一个 hedge 都会让完成声明失效——所以 layer (b) 被拦时表里写的是
 "(a) ⏸ 待评"，不是 "(a) ✅ 通过"。**一个专抓无据断言的闸门，自己的输出里不能有一句。**
 
@@ -351,7 +351,9 @@ cc-enforcer:
   before: {architecture: ..., root cause: ..., solution: ...}
   edits: [{file: "path:line", what: "..."}]
   convergence:
-    re-trigger: "$ python -m unittest → Ran 773 tests, OK"
+    re-trigger: |
+      $ <cmd>
+      <output, with test counts>
     boundary case: ...
     existing tests: ...
     self-quiz: {really solved: ..., better solution: ..., unverified: ..., verification reasonable: ...}
@@ -372,43 +374,34 @@ agent 每次提问与工具调用的关键路径上。复现命令：
 python hooks/scripts/bench_hooks.py --runs 60
 ```
 
-测于 v0.37.0 —— Windows 11、Python 3.13.3，每项 60 次，另丢弃 3 次预热：
+测于 v0.41.0 —— Linux、Python 3.11、4 vCPU，每项 60 次，另丢弃 3 次预热：
 
 | 场景 | p50 | p95 | max | cc-enforcer 自身占比 |
 |---|---:|---:|---:|---:|
-| `PreToolUse(Read)` | 135.2 ms | 149.9 ms | 178.4 ms | **+73.7 ms** |
-| `PreToolUse(Edit)` | 137.4 ms | 152.5 ms | 161.5 ms | **+75.9 ms** |
-| `PreToolUse(Bash)` | 151.9 ms | 181.4 ms | 192.5 ms | **+90.4 ms** |
-| `Stop`（全部九层） | 157.3 ms | 171.6 ms | 182.1 ms | **+95.8 ms** |
-| *基线：* `python -c pass` | 61.5 ms | 70.5 ms | 74.1 ms | — |
+| `SessionStart` | 29.9 ms | 35.9 ms | 38.8 ms | **+17.0 ms** |
+| `UserPromptSubmit`（每次提问） | 30.2 ms | 38.9 ms | 43.3 ms | **+17.3 ms** |
+| `PreToolUse(Read)` | 37.6 ms | 47.1 ms | 51.4 ms | **+24.7 ms** |
+| `PreToolUse(Edit)`（放行的系统式编辑） | 35.9 ms | 46.1 ms | 47.9 ms | **+23.0 ms** |
+| `PreToolUse(Bash)` | 30.9 ms | 39.3 ms | 49.3 ms | **+18.0 ms** |
+| `Stop`（编辑轮，全部九层） | 36.3 ms | 47.5 ms | 50.4 ms | **+23.4 ms** |
+| *基线：* `python -c pass` | 12.9 ms | 16.8 ms | 17.7 ms | — |
 
-**基线那一行才是重点。** 每个数字里大约一半是 Python 解释器启动——那不归
+**基线那一行才是重点。** 每个数字里有很大一块是 Python 解释器启动——那不归
 cc-enforcer 管，而且在 Windows 上明显慢于 Linux。插件自己的工作是"自身占比"
-那一列：几十毫秒，对照的是以秒计的 LLM 一轮。
-
-v0.39.2 之后的启动瘦身把这一列在每个钩子上砍掉了 40–60%：每个钩子只加载它的
-常规路径真正用到的模块，Stop 钩子的正则改为首次使用时才编译。Linux、Python
-3.11、同一台机器、每项 40 次：
-
-| 场景 | 瘦身前自身占比 | 瘦身后 |
-|---|---:|---:|
-| `UserPromptSubmit`（每次提问） | ≈ +50 ms | **+19 ms** |
-| `PreToolUse(Read)` | +53 ms | **+27 ms** |
-| `PreToolUse(Bash)` | +50 ms | **+21 ms** |
-| `Stop`（全部九层） | +68 ms | **+33 ms** |
+那一列：几十毫秒，对照的是以秒计的 LLM 一轮。各版本如何改变这些数字见 CHANGELOG。
 
 **关于这些数字的诚实交代**，因为一张基准表天然会换来超出它应得的信任：它们来自
 一台普通负载下的机器，中位数会随后台负载摆动几十毫秒，"自身占比"是两个中位数
 相减而不是隔离测量——当量级看，别当精确值。**CI 里没有任何东西钉住它们**；本页
-被钉住的数字、样例与清单由漂移门从代码派生（第八节），而延迟不行——它是你机器的
+登记在漂移门里的数字与清单由代码派生（第八节），而延迟不行——它是你机器的
 属性。脚本本身就是那条引用，请自己跑。
 
 ### 准确率姿态
 
 这里没有 precision / recall 表，而这个缺席是刻意的。检测器一律**宁可漏报不误报**
 （第八节）：凡是检测器够不到的地方，边界都写进规则文件、并由一条断言**不**检测的
-测试钉住，免得它悄悄漂移成一个隐含承诺——`同步核对: 核对过了` 和 `n/a` 一样空洞、
-照样放行，而测试明写了这一点。
+测试钉住，免得它悄悄漂移成一个隐含承诺——`同步核对: n/a` 会被拒，但同样空洞的
+`同步核对: 核对过了` 照样放行，而测试明写了这一点。
 
 ---
 
@@ -489,7 +482,7 @@ CI：`ubuntu-latest` × `windows-latest`，`fail-fast: false`。Windows 那条�
 
 | 变量 | 作用 |
 |---|---|
-| `CC_ENFORCER_LANG=<code>` | 注入文案、圣旨与 deny 理由的语言。未设 / `en` = 英文骨架；`zh` = 中文；任意其它语言码读 `<dir>/<code>/`，缺失文件逐个回退英文。 |
+| `CC_ENFORCER_LANG=<code>` | 注入文案、圣旨与 deny 理由的语言。未设 / `en` = 英文骨架；`zh` = 中文；任意其它语言码读 `prompts/<code>/`（缺失文件逐个回退英文）与 `lib/messages_<code>.py`（缺失键逐个回退英文）。 |
 | `CC_ENFORCER_DISABLE_LAYER_G=1` | 关闭 Stop layer (g) 文件声明校验。其余八层照常。 |
 | `CC_ENFORCER_AUTO_GC_DAYS=N` | SessionStart 时自动清理超过 N 天的会话状态，24 小时内最多一次。未设 / `0` → 关闭。 |
 | `CLAUDE_PLUGIN_DATA` | 会话状态根目录。由 Claude Code 设置；回退到 `${CLAUDE_PROJECT_DIR}/.claude/local/cc-enforcer/`，再回退到 `~/.claude/local/cc-enforcer/`。 |
@@ -506,17 +499,14 @@ CI：`ubuntu-latest` × `windows-latest`，`fail-fast: false`。Windows 那条�
 - **规则 02 与 05 没有自己的钩子**，规则 03、09、12 的推理那一半是文本层。没有
   钩子能验证你**真的**清扫了一个缺陷类，它只能验证你说了你清扫了。
 - **硬层是 Claude Code 专属的。** 其它 agent 拿到的是规则包。
-- **滚动补丁闸门在约 5 行及以下的文件上会失效**：那时一次两行的编辑就已跨越
-  文件的三分之一，因而算作系统式重写。这是有意的——"你没有重新理解整个文件
+- **滚动补丁闸门在极小的文件（几行）上会失效**：那时几乎任何一次编辑都跨越
+  文件的 30%，因而算作系统式重写。这是有意的——"你没有重新理解整个文件
   结构"这句话，对一个五行的文件本来就不成立。
 - **一切都失败向开，且宁可漏报不误报**——见第八节。
 
 ### 路线图
 
-**空的，而且是裁定为空。** 最后两项都是**退役**而非搁置：per-session 临时圣旨
-在结构上被卡住（圣旨 CLI 是 Bash 子进程，拿不到 `session_id`），而 layer (g) 的
-内容哈希升级前提被实测证伪（本机 mtime 可分辨到 1 ms，而 layer (g) 比的是首次
-接触基线与收尾时刻，相隔数秒）。一个功能列表里挂着永远不会做的条目，本身就是
+**空的，而且是裁定为空。** 最后两项为何是退役而非搁置：见 CHANGELOG 0.32.1。一个功能列表里挂着永远不会做的条目，本身就是
 这个仓库要治的那种陈旧。
 
 ---
