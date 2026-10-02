@@ -16,6 +16,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 Nothing planned. The roadmap is empty by decision, not by neglect — see
 v0.32.1 for why its last two entries were retired rather than carried.
 
+## [0.42.0] — 2026-10-02
+
 ### Bash guard: a wrapper no longer hides the command
 
 Every built-in Bash check read `argv[0]`, so `sudo chmod 777 x`,
@@ -5953,7 +5955,7 @@ soft layer is wired live.
 
 - Original free-form `claude.md` (replaced by the structured `CLAUDE.md`).
 
-[Unreleased]: https://github.com/skymanbp/cc-enforcer/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/skymanbp/cc-enforcer/compare/v0.42.0...HEAD
 [0.11.0]: https://github.com/skymanbp/cc-enforcer/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/skymanbp/cc-enforcer/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/skymanbp/cc-enforcer/compare/v0.9.0...v0.9.1
