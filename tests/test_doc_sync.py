@@ -1101,6 +1101,7 @@ class TestMarkdownCitationsResolve(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 ENGLISH_DOCS: tuple[str, ...] = (
     "README.md",
+    "SECURITY.md",
     "demo/README.md",
     "docs/ARCHITECTURE.md",
     "docs/CONTRIBUTING.md",
